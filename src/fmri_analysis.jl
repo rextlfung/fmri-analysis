@@ -15,7 +15,8 @@ Sections
   8.  Analysis Pipelines
 
 Dependencies — add via Pkg:
-  ]add CairoMakie Distributions ImageMorphology Plots FFTW
+  ]add CairoMakie Distributions Plots FFTW
+System dependency: FSL (`bet` must be on PATH)
 """
 
 using Statistics
@@ -25,7 +26,6 @@ using Printf
 using Plots
 using CairoMakie
 using Distributions
-using ImageMorphology
 using SpecialFunctions: gamma
 
 
@@ -310,116 +310,107 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    extract_brain_mask(X; intensity_threshold=0.2, closing_radius=3)
+    bet_brain_mask(mean_vol; tmp_dir="/tmp")
 
-Derive a binary brain mask from a 4-D BOLD array for use as a voxel filter
-prior to FDR correction. This is a morphological approximation of BET-style
-brain extraction — appropriate for excluding non-brain voxels before multiple
-comparisons correction, but not a substitute for BET for registration or
-surface analysis.
+Run FSL BET on a 3-D temporal mean volume and return a binary brain mask.
 
-The algorithm:
-  1. Compute the mean magnitude volume across time.
-  2. Threshold at `intensity_threshold × maximum(mean_vol)`.
-  3. Apply morphological closing (`closing_radius` successive dilate/erode
-     passes with the default 3×3×3 element) to fill sulcal gaps and holes.
-  4. Retain only the largest connected component under 6-connectivity.
+The volume is written to a temporary NIfTI file in `tmp_dir`, BET is invoked
+as `bet <input> <output> -m -n` (mask output only, no brain-extracted volume),
+the resulting mask is read back into Julia, and all temporary files are deleted.
 
 # Arguments
-- `X`                   : 4-D array (nx, ny, nz, nt); complex input is
-                           converted to magnitude automatically.
-- `intensity_threshold` : fraction of the volume maximum used as the intensity
-                           cutoff (default: 0.2). Increase if non-brain tissue
-                           survives; decrease if brain edges are eroded.
-- `closing_radius`      : number of successive dilate/erode passes used to
-                           approximate morphological closing (default: 3).
+- `mean_vol` : 3-D array (nx, ny, nz); the temporal mean of the BOLD series.
+               Complex input is converted to magnitude automatically.
+- `tmp_dir`  : directory for temporary NIfTI files (default: `"/tmp"`).
 
 # Returns
 - `mask` : `BitArray{3}` of size (nx, ny, nz); `true` inside the brain.
 
-# Example
-    mask = extract_brain_mask(Y)
-    println("Brain voxels: ", sum(mask), " / ", length(mask))
-
-    # Pass to fdr_correct:
-    brain_t = t_vol[mask]
-    brain_t_fdr, fdr_mask, p_vals, t_thr = fdr_correct(brain_t, df)
-    t_vol_fdr = zeros(Float32, size(t_vol))
-    t_vol_fdr[mask] .= brain_t_fdr
+# Requirements
+FSL must be installed and `bet` must be on `PATH`.
 """
-function extract_brain_mask(X::AbstractArray{<:Number,4};
-    intensity_threshold::Real=0.1,
-    closing_radius::Int=3)
+function bet_brain_mask(mean_vol::AbstractArray{<:Number,3}; tmp_dir::String="/tmp")
+    vol = eltype(mean_vol) <: Complex ? Float32.(abs.(mean_vol)) : Float32.(mean_vol)
 
-    # Mean magnitude volume across time
-    Y = eltype(X) <: Complex ? Float32.(abs.(X)) : Float32.(X)
-    mean_vol = dropdims(mean(Y, dims=4), dims=4)
+    mkpath(tmp_dir)
+    base      = joinpath(tmp_dir, "fmri_bet_$(getpid())")
+    in_path   = base * "_input.nii"
+    out_base  = base * "_output"
+    mask_path = out_base * "_mask.nii.gz"
 
-    # Intensity threshold
-    binary = BitArray(mean_vol .> intensity_threshold * maximum(mean_vol))
-
-    # Morphological closing: closing_radius dilations then closing_radius erosions.
-    # Each pass uses ImageMorphology's default 3×3×3 structuring element, so the
-    # effective closing radius grows with the number of passes.
-    closed = binary
-    for _ in 1:closing_radius
-        closed = dilate(closed)
+    try
+        niwrite(in_path, NIVolume(vol))
+        run(`bet $in_path $out_base -m -n`)
+        return BitArray(Array(niread(mask_path)) .> 0)
+    finally
+        isfile(in_path)   && rm(in_path)
+        isfile(mask_path) && rm(mask_path)
     end
-    for _ in 1:closing_radius
-        closed = erode(closed)
-    end
-
-    return _largest_connected_component(BitArray(closed))
-end
-
-
-"""BFS flood-fill over a 3-D binary array (6-connectivity). Returns a mask
-containing only the largest connected component."""
-function _largest_connected_component(binary::BitArray{3})
-    sx, sy, sz = size(binary)
-    labeled = zeros(Int32, sx, sy, sz)
-    label_sizes = Int[]
-    offsets = ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1))
-
-    # Pre-allocate queue; use a head pointer to avoid O(n) popfirst! shifts.
-    queue = Tuple{Int,Int,Int}[]
-    sizehint!(queue, sx * sy * sz ÷ 4)
-
-    for k in 1:sz, j in 1:sy, i in 1:sx
-        (binary[i, j, k] && labeled[i, j, k] == 0) || continue
-
-        current_label = length(label_sizes) + 1
-        push!(label_sizes, 0)
-        labeled[i, j, k] = current_label
-
-        empty!(queue)
-        push!(queue, (i, j, k))
-        head = 1
-
-        while head <= length(queue)
-            x, y, z = queue[head]
-            head += 1
-            label_sizes[current_label] += 1
-
-            for (dx, dy, dz) in offsets
-                xi, yi, zi = x + dx, y + dy, z + dz
-                if 1 ≤ xi ≤ sx && 1 ≤ yi ≤ sy && 1 ≤ zi ≤ sz &&
-                   binary[xi, yi, zi] && labeled[xi, yi, zi] == 0
-                    labeled[xi, yi, zi] = current_label
-                    push!(queue, (xi, yi, zi))
-                end
-            end
-        end
-    end
-
-    isempty(label_sizes) && return falses(sx, sy, sz)
-    return BitArray(labeled .== argmax(label_sizes))
 end
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 6.  Visualization
 # ─────────────────────────────────────────────────────────────────────────────
+"""
+    plot_design_matrix(X; condition_names=nothing)
+
+Heatmap of the GLM design matrix — useful for sanity-checking your model.
+"""
+function plot_design_matrix(X::AbstractMatrix{<:Real};
+    condition_names::Union{Vector{String},Nothing}=nothing)
+
+    n_regressors = size(X, 2)
+    labels = isnothing(condition_names) ?
+             ["Cond $i" for i in 1:(n_regressors-1)] :
+             condition_names
+    push!(labels, "Intercept")
+
+    return Plots.heatmap(X;
+        color=:grays,
+        xlabel="Regressor",
+        ylabel="Scan (TR)",
+        title="Design matrix",
+        xticks=(1:n_regressors, labels),
+        size=(600, 400))
+end
+
+"""
+    tmap_summary(t_map; thresholds=[1.65, 1.96, 2.58, 3.29, 4.42, 5.0], title=nothing)
+
+Print a table of how many voxels survive common t-thresholds, with
+approximate two-tailed p-values and percentage of total voxels.
+
+Default thresholds correspond roughly to:
+  p<.10, p<.05, p<.01, p<.001, p<.00001, p<.000001 (uncorrected)
+"""
+function tmap_summary(t_map::AbstractArray{<:Real};
+    thresholds::Vector{Float64}=[1.65, 1.96, 2.33, 2.58, 3.09, 3.29, 4.42, 5.0],
+    title::Union{String,Nothing}=nothing)
+
+    total = length(t_map)
+    header = isnothing(title) ? "── t-map summary" : "── t-map summary: $title"
+    println("\n$header")
+    @printf("   Total voxels : %d\n", total)
+    @printf("   Mean t       : %+.3f\n", mean(t_map))
+    @printf("   Std  t       : %.3f\n", std(t_map))
+    @printf("   Min / Max    : %.3f  /  %.3f\n", minimum(t_map), maximum(t_map))
+    @printf("   Median |t|   : %.3f\n", median(abs.(t_map)))
+    @printf("   99th pct |t| : %.3f\n", quantile(abs.(t_map), 0.99))
+    println("   ┌───────────┬────────────┬────────┬────────┬─────────┬────────┐")
+    println("   │ threshold │  approx p  │  pos   │  neg   │  total  │   %    │")
+    println("   ├───────────┼────────────┬────────┬────────┼─────────┼────────┤")
+    approx_p = [0.10, 0.05, 0.02, 0.01, 0.002, 0.001, 0.00001, 0.000001]
+    for (thr, p) in zip(thresholds, approx_p)
+        pos = count(t_map .> thr)
+        neg = count(t_map .< -thr)
+        both = pos + neg
+        pct = 100.0 * both / total
+        @printf("   │   |t|>%-4.2f│  p<%-6.0e  │ %6d │ %6d │ %7d │ %5.1f%% │\n",
+            thr, p, pos, neg, both, pct)
+    end
+    println("   └───────────┴────────────┴────────┴────────┴─────────┴────────┘")
+end
 
 """
     plot_tmap_flat(t_map; threshold=2.0, title="t-score map")
@@ -470,7 +461,6 @@ function plot_tmap_flat(t_map::AbstractVector{<:Real};
         margin=5Plots.mm)
 end
 
-
 """
     plot_tmap_slices(t_vol; threshold=2.0, clim=(-6,6),
                      underlay=nothing, title="t-map slices",
@@ -515,9 +505,9 @@ function plot_tmap_slices(t_vol::AbstractArray{<:Real,3};
     masked[masked.>threshold[1].&&masked.<threshold[2]] .= NaN32
 
     function get_slices(dim, idx)
-        sl_t = Matrix(selectdim(masked, dim, idx))
+        sl_t = Matrix(selectdim(masked, dim, idx[dim]))
         sl_u = isnothing(underlay) ? nothing :
-               Matrix(selectdim(underlay, dim, idx))
+               Matrix(selectdim(underlay, dim, idx[dim]))
         return sl_t, sl_u
     end
 
@@ -551,7 +541,11 @@ function plot_tmap_slices(t_vol::AbstractArray{<:Real,3};
 
         sym_range = maximum(abs.(collect(clim)))
         hm = CairoMakie.heatmap!(ax, sl_t;
-            colormap=CairoMakie.Reverse(:RdYlBu),
+            # Custom diverging colormap: Cyan -> Blue -> Black -> Red -> Yellow
+            colormap = cgrad(
+                [:cyan, :blue, :black, :red, :yellow], 
+                [0.0, 0.45, 0.5, 0.55, 1.0] # Pin black exactly to the middle (zero)
+            ),
             colorrange=(-sym_range, sym_range),
             nan_color=(:black, 0.0))
 
@@ -565,69 +559,6 @@ function plot_tmap_slices(t_vol::AbstractArray{<:Real,3};
 
     return fig
 end
-
-
-"""
-    plot_design_matrix(X; condition_names=nothing)
-
-Heatmap of the GLM design matrix — useful for sanity-checking your model.
-"""
-function plot_design_matrix(X::AbstractMatrix{<:Real};
-    condition_names::Union{Vector{String},Nothing}=nothing)
-
-    n_regressors = size(X, 2)
-    labels = isnothing(condition_names) ?
-             ["Cond $i" for i in 1:(n_regressors-1)] :
-             condition_names
-    push!(labels, "Intercept")
-
-    return Plots.heatmap(X;
-        color=:grays,
-        xlabel="Regressor",
-        ylabel="Scan (TR)",
-        title="Design matrix",
-        xticks=(1:n_regressors, labels),
-        size=(600, 400))
-end
-
-
-"""
-    tmap_summary(t_map; thresholds=[1.65, 1.96, 2.58, 3.29, 4.42, 5.0], title=nothing)
-
-Print a table of how many voxels survive common t-thresholds, with
-approximate two-tailed p-values and percentage of total voxels.
-
-Default thresholds correspond roughly to:
-  p<.10, p<.05, p<.01, p<.001, p<.00001, p<.000001 (uncorrected)
-"""
-function tmap_summary(t_map::AbstractArray{<:Real};
-    thresholds::Vector{Float64}=[1.65, 1.96, 2.33, 2.58, 3.09, 3.29, 4.42, 5.0],
-    title::Union{String,Nothing}=nothing)
-
-    total = length(t_map)
-    header = isnothing(title) ? "── t-map summary" : "── t-map summary: $title"
-    println("\n$header")
-    @printf("   Total voxels : %d\n", total)
-    @printf("   Mean t       : %+.3f\n", mean(t_map))
-    @printf("   Std  t       : %.3f\n", std(t_map))
-    @printf("   Min / Max    : %.3f  /  %.3f\n", minimum(t_map), maximum(t_map))
-    @printf("   Median |t|   : %.3f\n", median(abs.(t_map)))
-    @printf("   99th pct |t| : %.3f\n", quantile(abs.(t_map), 0.99))
-    println("   ┌───────────┬────────────┬────────┬────────┬─────────┬────────┐")
-    println("   │ threshold │  approx p  │  pos   │  neg   │  total  │   %    │")
-    println("   ├───────────┼────────────┬────────┬────────┼─────────┼────────┤")
-    approx_p = [0.10, 0.05, 0.02, 0.01, 0.002, 0.001, 0.00001, 0.000001]
-    for (thr, p) in zip(thresholds, approx_p)
-        pos = count(t_map .> thr)
-        neg = count(t_map .< -thr)
-        both = pos + neg
-        pct = 100.0 * both / total
-        @printf("   │   |t|>%-4.2f│  p<%-6.0e  │ %6d │ %6d │ %7d │ %5.1f%% │\n",
-            thr, p, pos, neg, both, pct)
-    end
-    println("   └───────────┴────────────┴────────┴────────┴─────────┴────────┘")
-end
-
 
 """
     plot_tmap_slices_shared(t_vol; threshold, clim, underlay, underlay_range,
@@ -672,9 +603,9 @@ function plot_tmap_slices_shared(
     masked[masked.>threshold[1].&&masked.<threshold[2]] .= NaN32
 
     function get_slices(dim, idx)
-        sl_t = Matrix(selectdim(masked, dim, idx))
+        sl_t = Matrix(selectdim(masked, dim, idx[dim]))
         sl_u = isnothing(underlay) ? nothing :
-               Matrix(selectdim(underlay, dim, idx))
+               Matrix(selectdim(underlay, dim, idx[dim]))
         return sl_t, sl_u
     end
 
@@ -714,7 +645,11 @@ function plot_tmap_slices_shared(
         end
 
         hm = CairoMakie.heatmap!(ax, sl_t;
-            colormap=CairoMakie.Reverse(:RdYlBu),
+            # Custom diverging colormap: Cyan -> Blue -> Black -> Red -> Yellow
+            colormap = cgrad(
+                [:cyan, :blue, :black, :red, :yellow], 
+                [0.0, 0.45, 0.5, 0.55, 1.0] # Pin black exactly to the middle (zero)
+            ),
             colorrange=(-sym_range, sym_range),
             nan_color=(:black, 0.0))
 
@@ -728,7 +663,6 @@ function plot_tmap_slices_shared(
 
     return fig
 end
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 7.  Experiment Parameters
@@ -768,30 +702,20 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    analyze_and_plot(X, params, title_base; ref_slice_idx=nothing)
+    analyze_and_plot(X, params, title_base; ref_slice_idx=nothing,
+                     brain_mask=nothing, tmp_dir="/tmp")
 
 Run the full GLM pipeline on a single 4-D volume and display an orthogonal
-slice plot.
-
-Complex-valued input is automatically converted to magnitude (`abs.()`) before
-fitting; a warning is printed when this happens.
-
-# Arguments
-- `X`             : 4-D array (nx, ny, nz, nt_raw); the first `params.n_discard`
-                    frames are discarded as instructional frames.
-- `params`        : `ExperimentParams` holding TR, onsets, durations, contrast,
-                    and number of frames to discard.
-- `title_base`    : string used in figure and summary titles.
-- `ref_slice_idx` : NamedTuple `(x=i, y=j, z=k)` to pin the display slice.
-                    When `nothing` (default) the peak-|t| voxel is used.
-
+slice plot. Returns the masked 4-D magnitude timeseries.
+...
 # Returns
-- `slice_idx` : the NamedTuple slice index actually used (pass to subsequent
-                calls via `ref_slice_idx` to keep slices aligned).
+- `slice_idx` : the NamedTuple slice index actually used.
 - `t_vol`     : 3-D t-score volume `(nx, ny, nz)`.
+- `Y_masked`  : 4-D masked magnitude timeseries `(nx, ny, nz, nt)`.
 """
 function analyze_and_plot(X::AbstractArray{<:Number,4}, params::ExperimentParams,
-    title_base::String; ref_slice_idx=nothing)
+    title_base::String; ref_slice_idx=nothing,
+    brain_mask=nothing, tmp_dir::String="/tmp")
 
     # Discard instructional frames
     Y = X[:, :, :, (params.n_discard+1):end]
@@ -805,8 +729,14 @@ function analyze_and_plot(X::AbstractArray{<:Number,4}, params::ExperimentParams
     end
 
     # ── Brain mask ──────────────────────────────────────────────────────────
-    brain_mask = extract_brain_mask(Y)
+    if isnothing(brain_mask)
+        mean_vol = dropdims(mean(Float32.(Y), dims=4), dims=4)
+        brain_mask = bet_brain_mask(mean_vol; tmp_dir=tmp_dir)
+    end
     brain_mask_flat = vec(brain_mask)
+
+    # ── Mask the 4-D Timeseries ─────────────────────────────────────────────
+    Y_masked = Float32.(Y) .* brain_mask
 
     # GLM on brain voxels only
     Y_mat = Matrix{Float32}(transpose(reshape(Float32.(Y), :, nt)))
@@ -831,7 +761,9 @@ function analyze_and_plot(X::AbstractArray{<:Number,4}, params::ExperimentParams
     display(fig_flat)
 
     t_vol = reshape(t_map, nx, ny, nz)
-    underlay = dropdims(mean(Y, dims=4), dims=4)
+    
+    # Underlay for plotting is just the mean of the masked timeseries
+    underlay = dropdims(mean(Y_masked, dims=4), dims=4)
 
     # ── Shared underlay intensity range: global min/max across brain ────────
     u_global_min = minimum(underlay)
@@ -841,7 +773,7 @@ function analyze_and_plot(X::AbstractArray{<:Number,4}, params::ExperimentParams
     # Use provided slice index or calculate peak within brain
     if isnothing(ref_slice_idx)
         peak_idx = argmax(abs.(t_vol))
-        slice_idx = (x=peak_idx[1], y=peak_idx[2], z=peak_idx[3])
+        slice_idx = (x=peak_idx, y=peak_idx, z=peak_idx)
     else
         slice_idx = ref_slice_idx
     end
@@ -855,61 +787,20 @@ function analyze_and_plot(X::AbstractArray{<:Number,4}, params::ExperimentParams
         title="t-scores for $title_base (FDR q<0.05)")
     display(fig)
 
-    return slice_idx, t_vol
+    return slice_idx, t_vol, Y_masked
 end
 
 
 """
-    analyze_and_plot_mslr(X, params, Nscales, patch_sizes, title_base;
-                          ref_slice_idx=nothing,
-                          q=0.05,
-                          threshold_quantile=0.99,
-                          plot_summary=false)
+    analyze_and_plot_mslr(...)
 
 Run GLM on each signal component of a multi-scale low-rank (MSLR)
-reconstruction and plot all scales with a **shared color scale and underlay**,
-but with **per-scale FDR thresholds** so that each scale's activation map is
-thresholded independently.
-
-Both the t-score color scale and the anatomical underlay are normalized
-globally across all scales, so components are directly comparable. The display
-threshold is determined per scale by Benjamini-Hochberg FDR at level `q`,
-falling back to `threshold_quantile` of that scale's brain |t| values if no
-voxels survive FDR correction.
-
-Complex-valued input is automatically converted to magnitude (`abs.()`) before
-fitting; a warning is printed when this happens.
-
-# Arguments
-- `X`                  : 5-D array (nx, ny, nz, nt, Nscales)
-- `params`             : `ExperimentParams` holding TR, onsets, durations, contrast,
-                         and number of frames to discard.
-- `Nscales`            : number of signal components
-- `patch_sizes`        : vector of patch sizes (used for subplot titles)
-- `title_base`         : string prefix, e.g. `"CAIPI + MSLR recon, 5 scales"`
-- `ref_slice_idx`      : NamedTuple `(x=i, y=j, z=k)` to fix the display
-                         slice. When `nothing` (default) the peak |t| in the
-                         **summed** reconstruction is used.
-- `q`                  : FDR level for per-scale thresholding (default `0.05`).
-- `threshold_quantile` : fallback quantile of brain |t| used as the display
-                         threshold when FDR finds no surviving voxels for a
-                         given scale. Default `0.99` (top 1 % shown).
-- `plot_summary`       : if `true`, call `tmap_summary` for each scale
-                         (brain voxels only).
-
+reconstruction...
+...
 # Returns
-- `slice_idx` : the NamedTuple slice index used (for reuse across calls)
-- `t_vols`    : vector of per-scale t-score volumes `(nx, ny, nz)`, length `Nscales`
-
-# Usage
-    # Auto-detect peak slice from the summed volume:
-    caipi_5_idx, t_vols = analyze_and_plot_mslr(
-        X, params, Nscales, patch_sizes, "CAIPI + MSLR recon, \$Nscales scales")
-
-    # Pin slice to one already computed:
-    _, t_vols = analyze_and_plot_mslr(
-        X, params, Nscales, patch_sizes, "PD + MSLR recon, \$Nscales scales";
-        ref_slice_idx=caipi_5_idx)
+- `slice_idx` : the NamedTuple slice index used
+- `t_vols`    : vector of per-scale t-score volumes `(nx, ny, nz)`
+- `Y_vols`    : vector of per-scale masked 4-D magnitude timeseries
 """
 function analyze_and_plot_mslr(
     X::AbstractArray{<:Number,5},
@@ -918,6 +809,8 @@ function analyze_and_plot_mslr(
     patch_sizes,
     title_base::String;
     ref_slice_idx=nothing,
+    brain_mask=nothing,
+    tmp_dir::String="/tmp",
     q::Real=0.05,
     threshold_quantile::Real=0.99,
     plot_summary::Bool=false)
@@ -933,19 +826,28 @@ function analyze_and_plot_mslr(
     nt = nt_raw - params.n_discard
 
     # ── Brain mask: derived from the temporal mean of the summed reconstruction
-    Y_for_mask = dropdims(sum(X[:, :, :, (params.n_discard+1):end, :], dims=5), dims=5)
-    brain_mask = extract_brain_mask(Y_for_mask)
+    if isnothing(brain_mask)
+        Y_sum_for_mask = dropdims(sum(X[:, :, :, (params.n_discard+1):end, :], dims=5), dims=5)
+        mean_vol = dropdims(mean(Float32.(Y_sum_for_mask), dims=4), dims=4)
+        brain_mask = bet_brain_mask(mean_vol; tmp_dir=tmp_dir)
+    end
     brain_mask_flat = vec(brain_mask)
     df = nt - length(params.contrast)
 
     # ── Pass 1: compute all t-maps and collect global statistics ───────────
     t_maps = Vector{Vector{Float32}}(undef, Nscales)
+    Y_vols = Vector{Array{Float32,4}}(undef, Nscales)
     underlays = Vector{Array{Float32,3}}(undef, Nscales)
     fdr_thresholds = fill(NaN, Nscales)
 
     for scale in 1:Nscales
         GC.gc()
         Y_scale = X[:, :, :, (params.n_discard+1):end, scale]
+        
+        # Mask the 4-D Timeseries for this scale
+        Y_masked = Float32.(Y_scale) .* brain_mask
+        Y_vols[scale] = Y_masked
+        
         Y_mat = Matrix{Float32}(transpose(reshape(Float32.(Y_scale), :, nt)))
         Y_mat_brain = Y_mat[:, brain_mask_flat]
 
@@ -957,7 +859,7 @@ function analyze_and_plot_mslr(
         t_map[brain_mask_flat] .= t_map_brain
         t_maps[scale] = t_map
 
-        underlays[scale] = dropdims(mean(Float32.(Y_scale), dims=4), dims=4)
+        underlays[scale] = dropdims(mean(Y_masked, dims=4), dims=4)
         _, _, _, fdr_thresholds[scale] = fdr_correct(t_map_brain, df; q=q)
     end
 
@@ -983,7 +885,7 @@ function analyze_and_plot_mslr(
 
         t_sum_vol = reshape(t_sum, nx, ny, nz)
         peak_idx = argmax(abs.(t_sum_vol))
-        ref_slice_idx = (x=peak_idx[1], y=peak_idx[2], z=peak_idx[3])
+        ref_slice_idx = (x=peak_idx, y=peak_idx, z=peak_idx)
     end
 
     # ── Pass 2: plot every scale with per-scale FDR threshold ─────────────
@@ -995,7 +897,7 @@ function analyze_and_plot_mslr(
 
         plot_summary && tmap_summary(t_map[brain_mask_flat]; title=scale_title)
 
-        # Per-scale display threshold: FDR result or fallback quantile
+        # Per-scale display threshold
         scale_thr = fdr_thresholds[scale]
         display_threshold = if isnan(scale_thr)
             quantile(abs.(t_map[brain_mask_flat]), threshold_quantile)
@@ -1021,5 +923,5 @@ function analyze_and_plot_mslr(
     end
 
     t_vols = [reshape(tm, nx, ny, nz) for tm in t_maps]
-    return ref_slice_idx, t_vols
+    return ref_slice_idx, t_vols, Y_vols
 end
