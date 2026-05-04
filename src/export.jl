@@ -1,3 +1,6 @@
+using NIfTI
+using Printf
+
 # ==============================================================================
 # NIfTI export helper functions
 # ==============================================================================
@@ -58,7 +61,7 @@ function export_niftis(Y_vols::Vector{<:AbstractArray{<:Real,4}},
 
         tmap_path = joinpath(out_dir, "$(tag)_tmap.nii")
         if isfile(tmap_path)
-            @printf("Skipping %s — file already exists\n", tag)
+            @printf("Skipping %s — file already exists\n", tmap_path)
         else
             niwrite(tmap_path, NIVolume(Float32.(t_vols[scale])))
             @printf("Exported %s\n", tag)

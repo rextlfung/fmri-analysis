@@ -22,6 +22,7 @@ System dependency: FSL (`bet` must be on PATH)
 using Statistics
 using LinearAlgebra
 using FFTW
+using NIfTI
 using Printf
 using Plots
 using CairoMakie
@@ -63,7 +64,7 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    build_design_matrix(onsets, durations, n_scans, tr; hrf=nothing)
+    build_design_matrix(onsets, durations, n_scans, tr)
 
 Construct an (n_scans × n_conditions + 1) design matrix X.
 
@@ -78,17 +79,16 @@ function build_design_matrix(
     onsets::Vector{<:AbstractVector{<:Real}},
     durations::Vector{<:AbstractVector{<:Real}},
     n_scans::Int,
-    tr::Real;
-    hrf::Union{AbstractVector{<:Real},Nothing}=nothing)
+    tr::Real)
 
-    isnothing(hrf) && (hrf = canonical_hrf(tr))
+    oversampling = 16
+    dt = tr / oversampling
+    hrf_fine = canonical_hrf(dt)   # HRF sampled at fine resolution, not zero-order held
 
     n_cond = length(onsets)
     X = zeros(n_scans, n_cond + 1)
 
     for c in 1:n_cond
-        oversampling = 16
-        dt = tr / oversampling
         n_fine = n_scans * oversampling
         stimulus = zeros(n_fine)
 
@@ -98,7 +98,6 @@ function build_design_matrix(
             stimulus[i_start:i_end] .= 1.0
         end
 
-        hrf_fine = repeat(hrf, inner=oversampling)[1:min(end, n_fine)]
         convolved = _conv(stimulus, hrf_fine)[1:n_fine]
         X[:, c] = convolved[oversampling:oversampling:end][1:n_scans]
     end
@@ -382,7 +381,7 @@ Print a table of how many voxels survive common t-thresholds, with
 approximate two-tailed p-values and percentage of total voxels.
 
 Default thresholds correspond roughly to:
-  p<.10, p<.05, p<.01, p<.001, p<.00001, p<.000001 (uncorrected)
+  p<.10, p<.05, p<.02, p<.01, p<.002, p<.001, p<.00001, p<.000001 (uncorrected)
 """
 function tmap_summary(t_map::AbstractArray{<:Real};
     thresholds::Vector{Float64}=[1.65, 1.96, 2.33, 2.58, 3.09, 3.29, 4.42, 5.0],
@@ -462,117 +461,21 @@ function plot_tmap_flat(t_map::AbstractVector{<:Real};
 end
 
 """
-    plot_tmap_slices(t_vol; threshold=2.0, clim=(-6,6),
-                     underlay=nothing, title="t-map slices",
-                     slice_indices=nothing)
+    plot_tmap_slices(t_vol; threshold=[-1.96, 1.96], clim=nothing,
+                     underlay=nothing, underlay_range=nothing,
+                     title="t-map slices", slice_indices=nothing)
 
 Orthogonal (axial / coronal / sagittal) slice view of a 3-D t-map using
 CairoMakie. Sub-threshold voxels are transparent.
 
-- `underlay`      : optional same-size anatomical volume shown in grayscale
-- `slice_indices` : NamedTuple `(x=i, y=j, z=k)`; defaults to volume center
+- `underlay`       : optional same-size anatomical volume shown in grayscale
+- `underlay_range` : `(u_min, u_max)` for consistent anatomical scaling across
+                     multiple calls; computed per-slice when omitted
+- `slice_indices`  : NamedTuple `(x=i, y=j, z=k)`; defaults to peak |t| voxel
 
 Returns a `CairoMakie.Figure` — call `display(fig)` or `save("out.png", fig)`.
 """
 function plot_tmap_slices(t_vol::AbstractArray{<:Real,3};
-    threshold=nothing,
-    clim=nothing,
-    underlay=nothing,
-    title::String="t-map slices",
-    slice_indices=nothing)
-
-    t_vals = filter(x -> !isnan(x) && !iszero(x), vec(t_vol))
-
-    threshold = isnothing(threshold) ? [-1.96f0, 1.96f0] : Float32.(threshold)
-    clim = if isnothing(clim)
-        isempty(t_vals) ? (-1.0f0, 1.0f0) :
-        (minimum(t_vals), maximum(t_vals))
-    else
-        clim
-    end
-
-    sx, sy, sz = size(t_vol)
-    if isnothing(slice_indices)
-        abs_vol = abs.(t_vol)
-        peak_idx = all(isnan, abs_vol) ? CartesianIndex(sx ÷ 2, sy ÷ 2, sz ÷ 2) :
-                   argmax(replace(abs_vol, NaN => -Inf))
-        si = (x=peak_idx[1], y=peak_idx[2], z=peak_idx[3])
-    else
-        si = slice_indices
-    end
-
-    masked = Float32.(t_vol)
-    masked[masked.>threshold[1].&&masked.<threshold[2]] .= NaN32
-
-    function get_slices(dim, idx)
-        sl_t = Matrix(selectdim(masked, dim, idx[dim]))
-        sl_u = isnothing(underlay) ? nothing :
-               Matrix(selectdim(underlay, dim, idx[dim]))
-        return sl_t, sl_u
-    end
-
-    slices = [
-        ("Axial (z=$(si.z))", get_slices(3, si.z)...),
-        ("Coronal (y=$(si.y))", get_slices(2, si.y)...),
-        ("Sagittal (x=$(si.x))", get_slices(1, si.x)...),
-    ]
-
-    fig = CairoMakie.Figure(size=(2200, 840), backgroundcolor=:black)
-    CairoMakie.Label(fig[0, 1:3], "$title, t ∉ [$(round(threshold[1], digits=2)), $(round(threshold[2], digits=2))]";
-        fontsize=18, color=:white, font=:bold)
-
-    for (col, (slab, sl_t, sl_u)) in enumerate(slices)
-        ax = CairoMakie.Axis(fig[1, col];
-            title=slab,
-            titlecolor=:white,
-            backgroundcolor=:black,
-            aspect=CairoMakie.DataAspect(),
-            yreversed=false,
-            xticksvisible=false,
-            yticksvisible=false,
-            xticklabelsvisible=false,
-            yticklabelsvisible=false)
-
-        if !isnothing(sl_u)
-            u_norm = (sl_u .- minimum(sl_u)) ./
-                     (maximum(sl_u) - minimum(sl_u) .+ eps())
-            CairoMakie.heatmap!(ax, u_norm; colormap=:grays, colorrange=(0, 1))
-        end
-
-        sym_range = maximum(abs.(collect(clim)))
-        hm = CairoMakie.heatmap!(ax, sl_t;
-            # Custom diverging colormap: Cyan -> Blue -> Black -> Red -> Yellow
-            colormap = cgrad(
-                [:cyan, :blue, :black, :red, :yellow], 
-                [0.0, 0.45, 0.5, 0.55, 1.0] # Pin black exactly to the middle (zero)
-            ),
-            colorrange=(-sym_range, sym_range),
-            nan_color=(:black, 0.0))
-
-        col == 3 && CairoMakie.Colorbar(fig[1, 4], hm;
-            label="t-score",
-            labelcolor=:white,
-            tickcolor=:white,
-            ticklabelcolor=:white,
-            width=16)
-    end
-
-    return fig
-end
-
-"""
-    plot_tmap_slices_shared(t_vol; threshold, clim, underlay, underlay_range,
-                             slice_indices, title)
-
-Identical to `plot_tmap_slices` but accepts an explicit `underlay_range`
-`(u_min, u_max)` so that the anatomical background is normalized on a
-**shared scale** across multiple calls.
-
-All keyword arguments have sensible defaults and the function is usable
-standalone as well as from `analyze_and_plot_mslr`.
-"""
-function plot_tmap_slices_shared(
-    t_vol::AbstractArray{<:Real,3};
     threshold=nothing,
     clim=nothing,
     underlay=nothing,
@@ -603,15 +506,14 @@ function plot_tmap_slices_shared(
     masked[masked.>threshold[1].&&masked.<threshold[2]] .= NaN32
 
     function get_slices(dim, idx)
-        sl_t = Matrix(selectdim(masked, dim, idx[dim]))
-        sl_u = isnothing(underlay) ? nothing :
-               Matrix(selectdim(underlay, dim, idx[dim]))
+        sl_t = Matrix(selectdim(masked, dim, idx))
+        sl_u = isnothing(underlay) ? nothing : Matrix(selectdim(underlay, dim, idx))
         return sl_t, sl_u
     end
 
     slices = [
-        ("Axial (z=$(si.z))", get_slices(3, si.z)...),
-        ("Coronal (y=$(si.y))", get_slices(2, si.y)...),
+        ("Axial (z=$(si.z))",     get_slices(3, si.z)...),
+        ("Coronal (y=$(si.y))",   get_slices(2, si.y)...),
         ("Sagittal (x=$(si.x))", get_slices(1, si.x)...),
     ]
 
@@ -646,10 +548,8 @@ function plot_tmap_slices_shared(
 
         hm = CairoMakie.heatmap!(ax, sl_t;
             # Custom diverging colormap: Cyan -> Blue -> Black -> Red -> Yellow
-            colormap = cgrad(
-                [:cyan, :blue, :black, :red, :yellow], 
-                [0.0, 0.45, 0.5, 0.55, 1.0] # Pin black exactly to the middle (zero)
-            ),
+            colormap=cgrad([:cyan, :blue, :black, :red, :yellow],
+                           [0.0, 0.45, 0.5, 0.55, 1.0]),
             colorrange=(-sym_range, sym_range),
             nan_color=(:black, 0.0))
 
@@ -757,28 +657,22 @@ function analyze_and_plot(X::AbstractArray{<:Number,4}, params::ExperimentParams
     # Visualize
     tmap_summary(t_map_brain; title="t-map summary for $title_base")
 
-    fig_flat = plot_tmap_flat(t_map; title="t-scores for $title_base")
+    fig_flat = plot_tmap_flat(t_map_brain; title="t-scores for $title_base")
     display(fig_flat)
 
     t_vol = reshape(t_map, nx, ny, nz)
-    
-    # Underlay for plotting is just the mean of the masked timeseries
+
     underlay = dropdims(mean(Y_masked, dims=4), dims=4)
+    underlay_range = (minimum(underlay), maximum(underlay))
 
-    # ── Shared underlay intensity range: global min/max across brain ────────
-    u_global_min = minimum(underlay)
-    u_global_max = maximum(underlay)
-    underlay_range = (u_global_min, u_global_max)
-
-    # Use provided slice index or calculate peak within brain
     if isnothing(ref_slice_idx)
         peak_idx = argmax(abs.(t_vol))
-        slice_idx = (x=peak_idx, y=peak_idx, z=peak_idx)
+        slice_idx = (x=peak_idx[1], y=peak_idx[2], z=peak_idx[3])
     else
         slice_idx = ref_slice_idx
     end
 
-    fig = plot_tmap_slices_shared(
+    fig = plot_tmap_slices(
         t_vol;
         underlay=underlay,
         slice_indices=slice_idx,
@@ -885,7 +779,7 @@ function analyze_and_plot_mslr(
 
         t_sum_vol = reshape(t_sum, nx, ny, nz)
         peak_idx = argmax(abs.(t_sum_vol))
-        ref_slice_idx = (x=peak_idx, y=peak_idx, z=peak_idx)
+        ref_slice_idx = (x=peak_idx[1], y=peak_idx[2], z=peak_idx[3])
     end
 
     # ── Pass 2: plot every scale with per-scale FDR threshold ─────────────
@@ -910,7 +804,7 @@ function analyze_and_plot_mslr(
 
         t_vol = reshape(t_map, nx, ny, nz)
 
-        fig = plot_tmap_slices_shared(
+        fig = plot_tmap_slices(
             t_vol;
             underlay=underlay,
             slice_indices=ref_slice_idx,
