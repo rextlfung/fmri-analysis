@@ -1,5 +1,6 @@
 using MAT, NIfTI, Revise
-includet("fmri_analysis.jl")
+includet("../src/fmri_analysis.jl")
+using .FmriTscores
 
 # ==============================================================================
 # Experiment & GLM parameters
@@ -21,7 +22,7 @@ params = ExperimentParams(
 # %% Load file: SMS-EPI + slice-GRAPPA recon
 fn = "/mnt/storage/rexfung/20251106balltap/tap/product/prod.nii"
 Y = niread(fn)
-global_slice_idx = analyze_and_plot(Y, params, "SMS-EPI + slice-GRAPPA recon")
+global_slice_idx, _, _ = analyze_and_plot(Y, params, "SMS-EPI + slice-GRAPPA recon")
 
 # %% Load file: Gaussian random sampling and L+S recon
 # Extract scale 2 specifically for L+S
@@ -48,7 +49,7 @@ Nscales = ndims(X) > 4 ? size(X, 5) : 1
 patch_sizes = string.(1:Nscales)   # no patch_sizes in file; use scale index as label
 
 Y = reverse(ndims(X) > 4 ? dropdims(sum(X, dims=5), dims=5) : X, dims=1)
-idx_5scales = analyze_and_plot(Y, params,
+idx_5scales, _, _ = analyze_and_plot(Y, params,
     "Gaussian random sampling and MSLR ($Nscales scales) recon (sum)";
     ref_slice_idx=global_slice_idx)
 

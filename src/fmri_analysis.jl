@@ -1,5 +1,5 @@
 """
-fmri_analysis.jl
+FmriTscores
 
 Task-based fMRI GLM analysis and visualization.
 
@@ -14,10 +14,9 @@ Sections
   7.  Experiment Parameters
   8.  Analysis Pipelines
 
-Dependencies — add via Pkg:
-  ]add CairoMakie Distributions Plots FFTW
-System dependency: FSL (`bet` must be on PATH)
+System dependency: FSL (`bet` must be on PATH) for brain mask extraction.
 """
+module FmriTscores
 
 using Statistics
 using LinearAlgebra
@@ -28,6 +27,11 @@ using Plots
 using CairoMakie
 using Distributions
 using SpecialFunctions: gamma
+
+export canonical_hrf, build_design_matrix, fit_glm, compute_tscores, run_glm,
+       t_to_p, fdr_correct, bonferroni_correct, bet_brain_mask,
+       ExperimentParams, plot_design_matrix, tmap_summary, plot_tmap_flat,
+       plot_tmap_slices, analyze_and_plot, analyze_and_plot_mslr, export_niftis
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -165,17 +169,20 @@ end
 
 
 """
-    run_glm(Y, onsets, durations, contrast, n_scans, tr)
+    run_glm(Y, onsets, durations, contrast, n_scans, tr; design_matrix=nothing)
 
 Full pipeline: design matrix → GLM fit → t-scores.
 
 # Arguments
-- `Y`         : (n_scans × n_voxels) BOLD data matrix
-- `onsets`    : onset times per condition in seconds
-- `durations` : durations per condition in seconds
-- `contrast`  : contrast vector (length = n_conditions + 1)
-- `n_scans`   : number of volumes
-- `tr`        : repetition time in seconds
+- `Y`             : (n_scans × n_voxels) BOLD data matrix
+- `onsets`        : onset times per condition in seconds
+- `durations`     : durations per condition in seconds
+- `contrast`      : contrast vector (length = n_conditions + 1, for the intercept)
+- `n_scans`       : number of volumes
+- `tr`            : repetition time in seconds
+- `design_matrix` : optional pre-built design matrix; built from `onsets`/`durations`
+                    when `nothing` (default). Pass a pre-built matrix to avoid
+                    recomputing it across repeated calls with the same parameters.
 
 # Returns `t_map`, `beta`, `X`
 """
@@ -185,9 +192,11 @@ function run_glm(
     durations::Vector{<:AbstractVector{<:Real}},
     contrast::AbstractVector{<:Real},
     n_scans::Int,
-    tr::Real)
+    tr::Real;
+    design_matrix::Union{AbstractMatrix{<:Real},Nothing}=nothing)
 
-    X = build_design_matrix(onsets, durations, n_scans, tr)
+    X = isnothing(design_matrix) ? build_design_matrix(onsets, durations, n_scans, tr) :
+                                   design_matrix
 
     @assert size(Y, 1) == n_scans "Y rows must equal n_scans"
     @assert length(contrast) == size(X, 2) "Contrast length must equal n_regressors"
@@ -398,7 +407,7 @@ function tmap_summary(t_map::AbstractArray{<:Real};
     @printf("   99th pct |t| : %.3f\n", quantile(abs.(t_map), 0.99))
     println("   ┌───────────┬────────────┬────────┬────────┬─────────┬────────┐")
     println("   │ threshold │  approx p  │  pos   │  neg   │  total  │   %    │")
-    println("   ├───────────┼────────────┬────────┬────────┼─────────┼────────┤")
+    println("   ├───────────┼────────────┼────────┼────────┼─────────┼────────┤")
     approx_p = [0.10, 0.05, 0.02, 0.01, 0.002, 0.001, 0.00001, 0.000001]
     for (thr, p) in zip(thresholds, approx_p)
         pos = count(t_map .> thr)
@@ -728,6 +737,9 @@ function analyze_and_plot_mslr(
     brain_mask_flat = vec(brain_mask)
     df = nt - length(params.contrast)
 
+    # ── Hoist design matrix: identical across all scales ────────────────────
+    design_matrix = build_design_matrix(params.onsets, params.durations, nt, params.tr)
+
     # ── Pass 1: compute all t-maps and collect global statistics ───────────
     t_maps = Vector{Vector{Float32}}(undef, Nscales)
     Y_vols = Vector{Array{Float32,4}}(undef, Nscales)
@@ -737,16 +749,16 @@ function analyze_and_plot_mslr(
     for scale in 1:Nscales
         GC.gc()
         Y_scale = X[:, :, :, (params.n_discard+1):end, scale]
-        
+
         # Mask the 4-D Timeseries for this scale
         Y_masked = Float32.(Y_scale) .* brain_mask
         Y_vols[scale] = Y_masked
-        
+
         Y_mat = Matrix{Float32}(transpose(reshape(Float32.(Y_scale), :, nt)))
         Y_mat_brain = Y_mat[:, brain_mask_flat]
 
         t_map_brain, _, _ = run_glm(Y_mat_brain, params.onsets, params.durations,
-            params.contrast, nt, params.tr)
+            params.contrast, nt, params.tr; design_matrix=design_matrix)
 
         # Reconstruct full t_map with zeros outside the brain
         t_map = zeros(Float32, nx * ny * nz)
@@ -773,7 +785,7 @@ function analyze_and_plot_mslr(
         Y_sum_mat_brain = Y_sum_mat[:, brain_mask_flat]
 
         t_sum_brain, _, _ = run_glm(Y_sum_mat_brain, params.onsets, params.durations,
-            params.contrast, nt, params.tr)
+            params.contrast, nt, params.tr; design_matrix=design_matrix)
         t_sum = zeros(Float32, nx * ny * nz)
         t_sum[brain_mask_flat] .= t_sum_brain
 
@@ -819,3 +831,7 @@ function analyze_and_plot_mslr(
     t_vols = [reshape(tm, nx, ny, nz) for tm in t_maps]
     return ref_slice_idx, t_vols, Y_vols
 end
+
+include("export.jl")
+
+end # module FmriTscores
