@@ -1,6 +1,15 @@
 using MAT, NIfTI, Revise
 includet("../src/fmri_analysis.jl")
-using .FmriTscores
+using .FmriAnalysis
+
+# FSL environment — required for bet_brain_mask
+let fsldir = get(ENV, "FSLDIR", expanduser("~/fsl"))
+    ENV["FSLDIR"] = fsldir
+    ENV["FSLOUTPUTTYPE"] = "NIFTI_GZ"
+    path_entries = split(get(ENV, "PATH", ""), ":")
+    fsl_bin = joinpath(fsldir, "bin")
+    fsl_bin ∈ path_entries || (ENV["PATH"] = fsl_bin * ":" * ENV["PATH"])
+end
 
 # ==============================================================================
 # Experiment & GLM parameters

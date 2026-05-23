@@ -1,9 +1,9 @@
 using Test, Random, Statistics, Distributions
 
 include(joinpath(@__DIR__, "..", "src", "fmri_analysis.jl"))
-using .FmriTscores
+using .FmriAnalysis
 
-@testset "FmriTscores" begin
+@testset "FmriAnalysis" begin
 
     @testset "HRF" begin
         hrf = canonical_hrf(0.5)

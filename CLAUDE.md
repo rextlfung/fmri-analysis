@@ -19,7 +19,7 @@ Scripts are designed for interactive Julia sessions with hot-reloading:
 ```julia
 using Revise
 includet("src/fmri_analysis.jl")
-using .FmriTscores
+using .FmriAnalysis
 ```
 
 `Revise` is required before `includet` — without it, changes to the source file won't be picked up without restarting Julia.
@@ -28,7 +28,7 @@ using .FmriTscores
 
 ### Module layout
 
-`src/fmri_analysis.jl` defines the `FmriTscores` module and `include`s `src/export.jl` at the end of the file. There is no separate entry point — both files together constitute the module. `export.jl` relies on `NIfTI` and `Printf` being imported by the parent module and must not add its own `using` statements.
+`src/fmri_analysis.jl` defines the `FmriAnalysis` module and `include`s `src/export.jl` at the end of the file. There is no separate entry point — both files together constitute the module. `export.jl` relies on `NIfTI` and `Printf` being imported by the parent module and must not add its own `using` statements.
 
 ### GLM pipeline
 
@@ -44,7 +44,14 @@ The GLM is fit on **brain voxels only**. The workflow is:
 
 ### Brain masking
 
-Brain masking shells out to FSL `bet` via `bet_brain_mask`. FSL must be installed and `bet` on `PATH`. The function writes a temporary NIfTI to `/tmp`, calls `bet`, reads the mask back, then cleans up. There is no pure-Julia fallback.
+Brain masking shells out to FSL `bet` via `bet_brain_mask`. The function writes a temporary NIfTI to `/tmp`, calls `bet`, reads the mask back, then cleans up. There is no pure-Julia fallback.
+
+Three environment variables must be set before running any analysis:
+- `FSLDIR` — path to the FSL installation root (e.g. `/home/user/fsl`)
+- `PATH` — must include `$FSLDIR/bin` so `bet` is found
+- `FSLOUTPUTTYPE=NIFTI_GZ` — `bet_brain_mask` reads `*_mask.nii.gz`; other output types will cause a file-not-found error
+
+To run a batch script from the shell: `FSLDIR=... FSLOUTPUTTYPE=NIFTI_GZ PATH="$FSLDIR/bin:$PATH" julia --project=.. <script>.jl`
 
 ### MSLR data format
 

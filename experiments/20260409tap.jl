@@ -1,6 +1,15 @@
 using MAT, NIfTI, Revise
 includet("../src/fmri_analysis.jl")
-using .FmriTscores
+using .FmriAnalysis
+
+# FSL environment — required for bet_brain_mask
+let fsldir = get(ENV, "FSLDIR", expanduser("~/fsl"))
+    ENV["FSLDIR"] = fsldir
+    ENV["FSLOUTPUTTYPE"] = "NIFTI_GZ"
+    path_entries = split(get(ENV, "PATH", ""), ":")
+    fsl_bin = joinpath(fsldir, "bin")
+    fsl_bin ∈ path_entries || (ENV["PATH"] = fsl_bin * ":" * ENV["PATH"])
+end
 
 # ==============================================================================
 # Experiment & GLM parameters
@@ -14,7 +23,7 @@ params = ExperimentParams(
     contrast=[1.0f0, -1.0f0, 0.0f0],
     n_discard=12)
 
-const base_dir = "/mnt/storage/rexfung/20260409tap/recon"
+const base_dir = "/StorageRAID/rexfung/20260409tap/recon_backup"
 const out_dir  = "$base_dir/fsleyes"
 mkpath(out_dir)
 
@@ -24,18 +33,18 @@ mkpath(out_dir)
 
 # (path, label, export_prefix)
 # The first entry establishes the shared reference slice index.
-nifti_recons = [
-    ("$base_dir/cgs/caipi_recon_cgs_l1_r5e-3.nii",    "CAIPI sampling + CG-SENSE recon",             "caipi_cgs"),
-    ("$base_dir/cgs/caipi_ts_recon_cgs_l1_r5e-3.nii", "time-shifted CAIPI sampling + CG-SENSE recon", "caipi_ts_cgs"),
-    ("$base_dir/cgs/pd_recon_cgs_l1_r5e-3.nii",       "PD sampling + CG-SENSE recon",                 "pd_cgs"),
-]
+# nifti_recons = [
+#     ("$base_dir/cgs/caipi_recon_cgs_l1_r5e-3.nii",    "CAIPI sampling + CG-SENSE recon",             "caipi_cgs"),
+#     ("$base_dir/cgs/caipi_ts_recon_cgs_l1_r5e-3.nii", "time-shifted CAIPI sampling + CG-SENSE recon", "caipi_ts_cgs"),
+#     ("$base_dir/cgs/pd_recon_cgs_l1_r5e-3.nii",       "PD sampling + CG-SENSE recon",                 "pd_cgs"),
+# ]
 
-cg_idx = nothing
-for (fn, label, prefix) in nifti_recons
-    idx, tmap, Y = analyze_and_plot(niread(fn), params, label; ref_slice_idx=cg_idx)
-    isnothing(cg_idx) && (cg_idx = idx)
-    export_niftis(Y, tmap, prefix, out_dir)
-end
+# cg_idx = nothing
+# for (fn, label, prefix) in nifti_recons
+#     idx, tmap, Y = analyze_and_plot(niread(fn), params, label; ref_slice_idx=cg_idx)
+#     isnothing(cg_idx) && (cg_idx = idx)
+#     export_niftis(Y, tmap, prefix, out_dir)
+# end
 
 # ==============================================================================
 # MSLR reconstructions

@@ -1,5 +1,5 @@
 """
-FmriTscores
+FmriAnalysis
 
 Task-based fMRI GLM analysis and visualization.
 
@@ -16,7 +16,7 @@ Sections
 
 System dependency: FSL (`bet` must be on PATH) for brain mask extraction.
 """
-module FmriTscores
+module FmriAnalysis
 
 using Statistics
 using LinearAlgebra
@@ -834,4 +834,4 @@ end
 
 include("export.jl")
 
-end # module FmriTscores
+end # module FmriAnalysis

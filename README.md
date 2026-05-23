@@ -8,8 +8,8 @@ Julia pipeline for task-based fMRI GLM analysis, designed to compare activation 
 
 ```
 src/
-  fmri_analysis.jl  # Module FmriTscores: HRF, design matrix, GLM, correction, plotting
-  export.jl         # NIfTI export helpers (included inside FmriTscores)
+  fmri_analysis.jl  # Module FmriAnalysis: HRF, design matrix, GLM, correction, plotting
+  export.jl         # NIfTI export helpers (included inside FmriAnalysis)
 experiments/
   <session>.jl      # Per-session analysis scripts (one file per scan date)
 test/
@@ -20,11 +20,11 @@ test/
 
 ## Core library (`src/fmri_analysis.jl`)
 
-The file defines the `FmriTscores` module. Load it with:
+The file defines the `FmriAnalysis` module. Load it with:
 
 ```julia
 includet("src/fmri_analysis.jl")
-using .FmriTscores
+using .FmriAnalysis
 ```
 
 ### 1. Haemodynamic Response Function
@@ -111,7 +111,20 @@ Standard library modules used (no installation needed): `Statistics`, `LinearAlg
 
 ### System dependency
 
-**FSL** must be installed and `bet` must be on `PATH`. Used by `bet_brain_mask` to derive binary brain masks.
+**FSL** must be installed. Used by `bet_brain_mask` to derive binary brain masks. Three environment variables are required before running any analysis:
+
+```bash
+export FSLDIR=/path/to/fsl          # e.g. /home/user/fsl or /usr/local/fsl
+export PATH="$FSLDIR/bin:$PATH"     # puts bet and other FSL tools on PATH
+export FSLOUTPUTTYPE=NIFTI_GZ       # bet must write .nii.gz (code expects this extension)
+```
+
+On most FSL installations you can source the provided setup script instead:
+
+```bash
+source "$FSLDIR/etc/fslconf/fsl.sh"
+export PATH="$FSLDIR/bin:$PATH"
+```
 
 ---
 
@@ -121,7 +134,7 @@ Standard library modules used (no installation needed): `Statistics`, `LinearAlg
 # In a Julia session or notebook
 using Revise
 includet("src/fmri_analysis.jl")   # hot-reload on edits
-using .FmriTscores
+using .FmriAnalysis
 
 # Define experiment parameters
 params = ExperimentParams(
