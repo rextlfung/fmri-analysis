@@ -12,10 +12,11 @@ let fsldir = get(ENV, "FSLDIR", expanduser("~/fsl"))
 end
 
 # ==============================================================================
-# MSLR reconstructions — convergence / normalisation comparison (4 configurations)
+# MSLR reconstructions — regularisation comparison (5 configurations)
 # ==============================================================================
-# Compares activation maps across 4 MSLR configurations (differing in iteration
-# count, stopping criterion, and normalisation) for the 20260409 tapping session.
+# Compares activation maps across 5 regularisation configurations
+# (3-scale MSLR overlapping/non-overlapping, GLR, LLR overlapping/non-overlapping)
+# for the 20260409 tapping session.
 # The 3 datasets (CAIPI / time-shifted CAIPI / PD sampling) are analysed within
 # each configuration; plots are pinned to the same anatomical slice.
 #
@@ -25,7 +26,11 @@ end
 # ==============================================================================
 
 mslr_cfgs = [
-    ("100itrs_tol=1e-2",                "",                    0),
+    ("3scales_nonoverlapping_100itrs_tol=1e-2", "", 0),
+    ("3scales_overlapping_100itrs_tol=1e-2",    "", 0),
+    ("GLR_100itrs_tol=1e-2",                    "", 0),
+    ("LLR_nonoverlapping_100itrs_tol=1e-2",     "", 0),
+    ("LLR_overlapping_100itrs_tol=1e-2",        "", 0),
 ]
 
 mslr_schemes = [
@@ -55,9 +60,9 @@ for (folder, suffix, n_discard_cfg) in mslr_cfgs
         fn = joinpath(mslr_base, folder, "$(file_base)$(suffix).mat")
         vars = matread(fn)
         X           = vars["X"]
-        Nscales     = Int(vars["Nscales"])
+        Nscales     = Int(only(vars["Nscales"]))
         patch_sizes = vars["patch_sizes"]
-        label = "$scheme_label + MSLR recon ($folder)"
+        label = "$scheme_label ($folder)"
 
         X_sum = dropdims(sum(X, dims=5), dims=5)
         slice_idx, tmap, Y = analyze_and_plot(X_sum, cfg_params,

@@ -47,7 +47,7 @@ function export_niftis(Y_vols::Vector{<:AbstractArray{<:Real,4}},
 
     for scale in 1:Nscales
         ps = Int.(patch_sizes[scale])
-        tag = "$(prefix)_$(Nscales)scales_patchsize$(ps)"
+        tag = "$(prefix)_$(Nscales)scales_scale$(scale)_patchsize$(ps)"
 
         mag_path = joinpath(out_dir, "$(tag)_mag.nii")
         if isfile(mag_path)

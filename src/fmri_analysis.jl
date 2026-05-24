@@ -103,7 +103,7 @@ function build_design_matrix(
         end
 
         convolved = _conv(stimulus, hrf_fine)[1:n_fine]
-        X[:, c] = convolved[oversampling:oversampling:end][1:n_scans]
+        X[:, c] = convolved[1:oversampling:end][1:n_scans]
     end
 
     X[:, end] .= 1.0   # intercept
@@ -351,8 +351,9 @@ function bet_brain_mask(mean_vol::AbstractArray{<:Number,3}; tmp_dir::String="/t
         run(`bet $in_path $out_base -m -n`)
         return BitArray(Array(niread(mask_path)) .> 0)
     finally
-        isfile(in_path)   && rm(in_path)
-        isfile(mask_path) && rm(mask_path)
+        isfile(in_path)                  && rm(in_path)
+        isfile(mask_path)                && rm(mask_path)
+        isfile(out_base * ".nii.gz")     && rm(out_base * ".nii.gz")
     end
 end
 
@@ -371,7 +372,7 @@ function plot_design_matrix(X::AbstractMatrix{<:Real};
     n_regressors = size(X, 2)
     labels = isnothing(condition_names) ?
              ["Cond $i" for i in 1:(n_regressors-1)] :
-             condition_names
+             copy(condition_names)
     push!(labels, "Intercept")
 
     return Plots.heatmap(X;
@@ -662,6 +663,7 @@ function analyze_and_plot(X::AbstractArray{<:Number,4}, params::ExperimentParams
     df = nt - size(design_matrix, 2)
     _, _, _, t_thr = fdr_correct(t_map_brain, df)
     display_threshold = isnan(t_thr) ? quantile(abs.(t_map_brain), 0.99) : t_thr
+    display_threshold = max(display_threshold, eps(Float32))
 
     # Visualize
     tmap_summary(t_map_brain; title="t-map summary for $title_base")
@@ -726,6 +728,7 @@ function analyze_and_plot_mslr(
     end
 
     (nx, ny, nz, nt_raw, _) = size(X)
+    @assert size(X, 5) == Nscales "Nscales=$Nscales does not match size(X,5)=$(size(X,5))"
     nt = nt_raw - params.n_discard
 
     # ── Brain mask: derived from the temporal mean of the summed reconstruction
@@ -810,6 +813,7 @@ function analyze_and_plot_mslr(
         else
             scale_thr
         end
+        display_threshold = max(display_threshold, eps(Float32))
 
         fig_flat = plot_tmap_flat(t_map[brain_mask_flat]; title="t-scores for $title_base")
         display(fig_flat)
