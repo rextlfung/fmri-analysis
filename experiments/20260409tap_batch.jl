@@ -12,10 +12,10 @@ let fsldir = get(ENV, "FSLDIR", expanduser("~/fsl"))
 end
 
 # ==============================================================================
-# MSLR reconstructions — regularisation comparison (5 configurations)
+# MSLR reconstructions — regularisation & tolerance comparison (8 configurations)
 # ==============================================================================
-# Compares activation maps across 5 regularisation configurations
-# (3-scale MSLR overlapping/non-overlapping, GLR, LLR overlapping/non-overlapping)
+# Compares activation maps across 8 configurations spanning regularisation type
+# (3-scale MSLR, GLR, LLR) and convergence tolerance (tol=1e-2 vs tol=1e-3)
 # for the 20260409 tapping session.
 # The 3 datasets (CAIPI / time-shifted CAIPI / PD sampling) are analysed within
 # each configuration; plots are pinned to the same anatomical slice.
@@ -26,11 +26,16 @@ end
 # ==============================================================================
 
 mslr_cfgs = [
+    # tol=1e-2
     ("3scales_nonoverlapping_100itrs_tol=1e-2", "", 0),
     ("3scales_overlapping_100itrs_tol=1e-2",    "", 0),
     ("GLR_100itrs_tol=1e-2",                    "", 0),
     ("LLR_nonoverlapping_100itrs_tol=1e-2",     "", 0),
     ("LLR_overlapping_100itrs_tol=1e-2",        "", 0),
+    # tol=1e-3
+    ("3scales_nonoverlapping_100itrs_tol=1e-3", "", 0),
+    ("GLR_100itrs_tol=1e-3",                    "", 0),
+    ("LLR_100itrs_tol=1e-3",                    "", 0),
 ]
 
 mslr_schemes = [

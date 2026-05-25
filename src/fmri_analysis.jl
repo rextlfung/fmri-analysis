@@ -798,7 +798,9 @@ function analyze_and_plot_mslr(
     end
 
     # ── Pass 2: plot every scale with per-scale FDR threshold ─────────────
-    for scale in 1:Nscales
+    # Skip when Nscales==1: the sum and single scale are identical, and the
+    # caller already plotted the sum via analyze_and_plot.
+    for scale in (Nscales > 1 ? (1:Nscales) : ())
         GC.gc()
         scale_title = "$title_base, scale = $(patch_sizes[scale]) (FDR q<$q)"
         t_map = t_maps[scale]
