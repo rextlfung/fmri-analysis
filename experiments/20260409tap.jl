@@ -12,72 +12,74 @@ let fsldir = get(ENV, "FSLDIR", expanduser("~/fsl"))
 end
 
 # ==============================================================================
-# Experiment & GLM parameters
+# MSLR reconstructions — regularisation comparison (5 configurations)
+# ==============================================================================
+# Compares activation maps across 5 regularisation configurations for the
+# 20260409 tapping session, all at tol=1e-3:
+#   - GLR        (Nscales=1, global low-rank)
+#   - LLR        (Nscales=1, locally low-rank)
+#   - G+LLR      (Nscales=2, global + local low-rank)
+#   - G+VLR      (Nscales=2, global + voxelwise low-rank)
+#   - G+L+VLR    (Nscales=3, global + local + voxelwise low-rank)
+# Each configuration contains 3 datasets (CAIPI / time-shifted CAIPI / PD
+# sampling); plots within a configuration are pinned to the same anatomical
+# slice. All folders contain nt=375 frames (pre-trimmed) → n_discard=0.
 # ==============================================================================
 
-# Tapping paradigm: alternating tap/rest blocks, 20 s each, 40 s period
+mslr_cfgs = [
+    "GLR_100itrs_tol=1e-3",
+    "LLR_100itrs_tol=1e-3",
+    "G+LLR_100itrs_tol=1e-3",
+    "G+VLR_100itrs_tol=1e-3",
+    "G+L+VLR_100itrs_tol=1e-3",
+]
+
+mslr_schemes = [
+    ("caipi_recon",    "CAIPI sampling",              "caipi"),
+    ("caipi_ts_recon", "time-shifted CAIPI sampling", "caipi_ts"),
+    ("pd_recon",       "PD sampling",                 "pd"),
+]
+
+mslr_base = "/StorageRAID/rexfung/20260409tap/recon/mslr"
+
 params = ExperimentParams(
     tr=0.8f0,
     onsets=[collect(0.0f0:40.0f0:320.0f0), collect(20.0f0:40.0f0:320.0f0)],
     durations=[fill(20.0f0, 9), fill(20.0f0, 9)],
     contrast=[1.0f0, -1.0f0, 0.0f0],
-    n_discard=12)
+    n_discard=0)
 
-const base_dir = "/StorageRAID/rexfung/20260409tap/recon_backup"
-const out_dir  = "$base_dir/fsleyes"
-mkpath(out_dir)
+for folder in mslr_cfgs
+    cfg_out = joinpath(mslr_base, folder, "fsleyes")
+    mkpath(cfg_out)
 
-# ==============================================================================
-# NIfTI reconstructions (CG-SENSE variants)
-# ==============================================================================
+    # ref_slice_idx pinned from the first dataset's summed reconstruction and
+    # reused across all three sampling schemes so all plots show the same slice.
+    cfg_ref_idx = nothing
 
-# (path, label, export_prefix)
-# The first entry establishes the shared reference slice index.
-# nifti_recons = [
-#     ("$base_dir/cgs/caipi_recon_cgs_l1_r5e-3.nii",    "CAIPI sampling + CG-SENSE recon",             "caipi_cgs"),
-#     ("$base_dir/cgs/caipi_ts_recon_cgs_l1_r5e-3.nii", "time-shifted CAIPI sampling + CG-SENSE recon", "caipi_ts_cgs"),
-#     ("$base_dir/cgs/pd_recon_cgs_l1_r5e-3.nii",       "PD sampling + CG-SENSE recon",                 "pd_cgs"),
-# ]
+    for (file_base, scheme_label, export_prefix) in mslr_schemes
+        fn = joinpath(mslr_base, folder, "$(file_base).mat")
+        vars = matread(fn)
+        X           = vars["X"]
+        Nscales     = Int(only(vars["Nscales"]))
+        patch_sizes = vars["patch_sizes"]
+        label = "$scheme_label ($folder)"
 
-# cg_idx = nothing
-# for (fn, label, prefix) in nifti_recons
-#     idx, tmap, Y = analyze_and_plot(niread(fn), params, label; ref_slice_idx=cg_idx)
-#     isnothing(cg_idx) && (cg_idx = idx)
-#     export_niftis(Y, tmap, prefix, out_dir)
-# end
+        # For Nscales>1, analyze the summed reconstruction first to pin the
+        # reference slice. For Nscales==1, the sum and the single scale are
+        # identical so we skip the redundant sum analysis and let the mslr
+        # call pick the peak slice internally on the first scheme.
+        if Nscales > 1
+            X_sum = dropdims(sum(X, dims=5), dims=5)
+            slice_idx, tmap, Y = analyze_and_plot(X_sum, params,
+                "$label, $Nscales scales (sum)"; ref_slice_idx=cfg_ref_idx)
+            isnothing(cfg_ref_idx) && (cfg_ref_idx = slice_idx)
+            export_niftis(Y, tmap, "$(export_prefix)_$(Nscales)scales_sum", cfg_out)
+        end
 
-# ==============================================================================
-# MSLR reconstructions
-# ==============================================================================
-
-# (path, label, export_prefix, include_sum)
-# include_sum=true  → analyze the summed reconstruction first and use it to pin
-#                     the reference slice; also exports the summed t-map.
-# include_sum=false → let analyze_and_plot_mslr pick the peak slice internally
-#                     (used for single-scale LLR where the sum is trivial).
-mslr_recons = [
-    ("$base_dir/mslr/caipi_recon_3scales.mat",    "CAIPI sampling + MSLR recon",             "caipi",    true),
-    ("$base_dir/mslr/caipi_ts_recon_3scales.mat", "time-shifted CAIPI sampling + MSLR recon", "caipi_ts", true),
-    ("$base_dir/mslr/pd_recon_3scales.mat",       "PD sampling + MSLR recon",                 "pd",       true),
-    ("$base_dir/mslr/caipi_recon_1scales.mat",    "CAIPI sampling + MSLR recon",             "caipi",    false),
-    ("$base_dir/mslr/caipi_ts_recon_1scales.mat", "time-shifted CAIPI sampling + MSLR recon", "caipi_ts", false),
-    ("$base_dir/mslr/pd_recon_1scales.mat",       "PD sampling + MSLR recon",                 "pd",       false),
-]
-
-for (fn, label, prefix, include_sum) in mslr_recons
-    vars = matread(fn)
-    X = vars["X"]
-    Nscales = Int(vars["Nscales"])
-    patch_sizes = vars["patch_sizes"]
-
-    ref_idx = nothing
-    if include_sum
-        X_sum = dropdims(sum(X, dims=5), dims=5)
-        ref_idx, tmap, Y = analyze_and_plot(X_sum, params, "$label, $Nscales scales (sum)")
-        export_niftis(Y, tmap, "$(prefix)_$(Nscales)scales_sum", out_dir)
+        slice_idx, tmaps, Yvols = analyze_and_plot_mslr(X, params, Nscales, patch_sizes,
+            "$label, $Nscales scales"; ref_slice_idx=cfg_ref_idx)
+        isnothing(cfg_ref_idx) && (cfg_ref_idx = slice_idx)
+        export_niftis(Yvols, tmaps, patch_sizes, Nscales, export_prefix, cfg_out)
     end
-
-    _, tmaps, Yvols = analyze_and_plot_mslr(X, params, Nscales, patch_sizes,
-        "$label, $Nscales scales"; ref_slice_idx=ref_idx)
-    export_niftis(Yvols, tmaps, patch_sizes, Nscales, prefix, out_dir)
 end
