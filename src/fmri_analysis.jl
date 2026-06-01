@@ -466,7 +466,7 @@ function plot_tmap_flat(t_map::AbstractVector{<:Real};
     return Plots.plot(p1, p2;
         layout=(1, 2),
         plot_title=title,
-        size=(1000, 400),
+        size=(1960, 900),
         margin=5Plots.mm)
 end
 
@@ -527,7 +527,7 @@ function plot_tmap_slices(t_vol::AbstractArray{<:Real,3};
         ("Sagittal (x=$(si.x))", get_slices(1, si.x)...),
     ]
 
-    fig = CairoMakie.Figure(size=(2200, 840), backgroundcolor=:black)
+    fig = CairoMakie.Figure(size=(1600, 900), backgroundcolor=:black)
     CairoMakie.Label(fig[0, 1:3],
         "$title, t ∉ [$(round(threshold[1], digits=2)), $(round(threshold[2], digits=2))]";
         fontsize=18, color=:white, font=:bold)
@@ -668,8 +668,8 @@ function analyze_and_plot(X::AbstractArray{<:Number,4}, params::ExperimentParams
     # Visualize
     tmap_summary(t_map_brain; title="t-map summary for $title_base")
 
-    fig_flat = plot_tmap_flat(t_map_brain; title="t-scores for $title_base")
-    display(fig_flat)
+    fig_flat = plot_tmap_flat(t_map_brain; threshold=display_threshold, title="t-scores for $title_base")
+    # display(fig_flat)
 
     t_vol = reshape(t_map, nx, ny, nz)
 
@@ -817,7 +817,7 @@ function analyze_and_plot_mslr(
         end
         display_threshold = max(display_threshold, eps(Float32))
 
-        fig_flat = plot_tmap_flat(t_map[brain_mask_flat]; title="t-scores for $title_base")
+        fig_flat = plot_tmap_flat(t_map[brain_mask_flat]; threshold=display_threshold, title="t-scores for $title_base")
         display(fig_flat)
 
         t_vol = reshape(t_map, nx, ny, nz)
