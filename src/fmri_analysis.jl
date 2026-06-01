@@ -494,6 +494,7 @@ function plot_tmap_slices(t_vol::AbstractArray{<:Real,3};
     slice_indices=nothing)
 
     t_vals = filter(x -> !isnan(x) && !iszero(x), vec(t_vol))
+    max_t = isempty(t_vals) ? NaN : maximum(t_vals)
 
     threshold = isnothing(threshold) ? [-1.96f0, 1.96f0] : Float32.(threshold)
     clim = if isnothing(clim)
@@ -529,7 +530,7 @@ function plot_tmap_slices(t_vol::AbstractArray{<:Real,3};
 
     fig = CairoMakie.Figure(size=(1600, 900), backgroundcolor=:black)
     CairoMakie.Label(fig[0, 1:3],
-        "$title, t ∉ [$(round(threshold[1], digits=2)), $(round(threshold[2], digits=2))]";
+        "$title, t ∉ [$(round(threshold[1], digits=2)), $(round(threshold[2], digits=2))], max t = $(round(max_t, digits=2))";
         fontsize=18, color=:white, font=:bold)
 
     sym_range = maximum(abs.(collect(clim)))
