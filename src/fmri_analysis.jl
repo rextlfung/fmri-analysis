@@ -668,7 +668,7 @@ function analyze_and_plot(X::AbstractArray{<:Number,4}, params::ExperimentParams
     # Visualize
     tmap_summary(t_map_brain; title="t-map summary for $title_base")
 
-    fig_flat = plot_tmap_flat(t_map_brain; threshold=display_threshold, title="t-scores for $title_base")
+    # fig_flat = plot_tmap_flat(t_map_brain; threshold=display_threshold, title="t-scores for $title_base")
     # display(fig_flat)
 
     t_vol = reshape(t_map, nx, ny, nz)
@@ -718,7 +718,8 @@ function analyze_and_plot_mslr(
     tmp_dir::String="/tmp",
     q::Real=0.05,
     threshold_quantile::Real=0.99,
-    plot_summary::Bool=false)
+    plot_summary::Bool=false,
+    plot_sum::Bool=false)
 
     # Auto-convert complex input to magnitude
     if eltype(X) <: Complex
@@ -772,34 +773,74 @@ function analyze_and_plot_mslr(
         _, _, _, fdr_thresholds[scale] = fdr_correct(t_map_brain, df; q=q)
     end
 
+    # ── Sum reconstruction: slice index and/or same-scale plot ─────────────
+    t_sum_brain_vec = Float32[]
+    t_sum_vol_out = nothing
+    Y_sum_masked_out = nothing
+    underlay_sum_out = nothing
+    fdr_thr_sum = NaN
+
+    if plot_sum || isnothing(ref_slice_idx)
+        GC.gc()
+        Y_sum = dropdims(sum(X[:, :, :, (params.n_discard+1):end, :], dims=5), dims=5)
+        Y_sum_mat_brain = Matrix{Float32}(transpose(reshape(Float32.(Y_sum), :, nt)))[:, brain_mask_flat]
+        t_sum_brain_vec, _, _ = run_glm(Y_sum_mat_brain, params.onsets, params.durations,
+            params.contrast, nt, params.tr; design_matrix=design_matrix)
+        t_sum_flat = zeros(Float32, nx * ny * nz)
+        t_sum_flat[brain_mask_flat] .= t_sum_brain_vec
+        t_sum_vol_local = reshape(t_sum_flat, nx, ny, nz)
+
+        if isnothing(ref_slice_idx)
+            peak_idx = argmax(abs.(t_sum_vol_local))
+            ref_slice_idx = (x=peak_idx[1], y=peak_idx[2], z=peak_idx[3])
+        end
+
+        if plot_sum
+            t_sum_vol_out = t_sum_vol_local
+            Y_sum_masked_out = Float32.(Y_sum) .* brain_mask
+            underlay_sum_out = dropdims(mean(Y_sum_masked_out, dims=4), dims=4)
+            _, _, _, fdr_thr_sum_val = fdr_correct(t_sum_brain_vec, df; q=q)
+            fdr_thr_sum = fdr_thr_sum_val
+        end
+        GC.gc()
+    end
+
     # ── Shared t-score color scale: symmetric around global max |t| ───────
     global_max_t = maximum(maximum(abs.(tm)) for tm in t_maps)
+    if plot_sum && !isnothing(t_sum_vol_out)
+        global_max_t = max(global_max_t, maximum(abs.(t_sum_vol_out)))
+    end
     shared_clim = (-global_max_t, global_max_t)
 
     # ── Shared underlay intensity range: global min/max across all scales ──
     u_global_min = minimum(minimum(u) for u in underlays)
     u_global_max = maximum(maximum(u) for u in underlays)
+    if plot_sum && !isnothing(underlay_sum_out)
+        u_global_min = min(u_global_min, minimum(underlay_sum_out))
+        u_global_max = max(u_global_max, maximum(underlay_sum_out))
+    end
     shared_underlay_range = (u_global_min, u_global_max)
 
-    # ── Determine slice index from summed reconstruction if not provided ───
-    if isnothing(ref_slice_idx)
-        Y_sum = dropdims(sum(X[:, :, :, (params.n_discard+1):end, :], dims=5), dims=5)
-        Y_sum_mat = Matrix{Float32}(transpose(reshape(Float32.(Y_sum), :, nt)))
-        Y_sum_mat_brain = Y_sum_mat[:, brain_mask_flat]
-
-        t_sum_brain, _, _ = run_glm(Y_sum_mat_brain, params.onsets, params.durations,
-            params.contrast, nt, params.tr; design_matrix=design_matrix)
-        t_sum = zeros(Float32, nx * ny * nz)
-        t_sum[brain_mask_flat] .= t_sum_brain
-
-        t_sum_vol = reshape(t_sum, nx, ny, nz)
-        peak_idx = argmax(abs.(t_sum_vol))
-        ref_slice_idx = (x=peak_idx[1], y=peak_idx[2], z=peak_idx[3])
+    # ── Pass 2: plot sum (same scale), then per-scale ─────────────────────
+    if plot_sum && !isnothing(t_sum_vol_out)
+        GC.gc()
+        sum_title = Nscales > 1 ? "$title_base, sum (FDR q<$q)" : "$title_base (FDR q<$q)"
+        plot_summary && tmap_summary(t_sum_brain_vec; title=sum_title)
+        sum_thr = isnan(fdr_thr_sum) ?
+            quantile(abs.(t_sum_brain_vec), threshold_quantile) : Float64(fdr_thr_sum)
+        sum_thr = max(Float32(sum_thr), eps(Float32))
+        fig_sum = plot_tmap_slices(
+            t_sum_vol_out;
+            underlay=underlay_sum_out,
+            slice_indices=ref_slice_idx,
+            threshold=[-sum_thr, sum_thr],
+            clim=shared_clim,
+            underlay_range=shared_underlay_range,
+            title=sum_title)
+        display(fig_sum)
     end
 
-    # ── Pass 2: plot every scale with per-scale FDR threshold ─────────────
-    # Skip when Nscales==1: the sum and single scale are identical, and the
-    # caller already plotted the sum via analyze_and_plot.
+    # Skip per-scale plots when Nscales==1 (sum and single scale are identical).
     for scale in (Nscales > 1 ? (1:Nscales) : ())
         GC.gc()
         scale_title = "$title_base, scale = $(patch_sizes[scale]) (FDR q<$q)"
@@ -817,8 +858,8 @@ function analyze_and_plot_mslr(
         end
         display_threshold = max(display_threshold, eps(Float32))
 
-        fig_flat = plot_tmap_flat(t_map[brain_mask_flat]; threshold=display_threshold, title="t-scores for $title_base")
-        display(fig_flat)
+        # fig_flat = plot_tmap_flat(t_map[brain_mask_flat]; threshold=display_threshold, title="t-scores for $title_base")
+        # display(fig_flat)
 
         t_vol = reshape(t_map, nx, ny, nz)
 
@@ -835,7 +876,7 @@ function analyze_and_plot_mslr(
     end
 
     t_vols = [reshape(tm, nx, ny, nz) for tm in t_maps]
-    return ref_slice_idx, t_vols, Y_vols
+    return ref_slice_idx, t_vols, Y_vols, t_sum_vol_out, Y_sum_masked_out
 end
 
 include("export.jl")

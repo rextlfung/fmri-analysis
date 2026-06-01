@@ -65,21 +65,13 @@ for folder in mslr_cfgs
         patch_sizes = vars["patch_sizes"]
         label = "$scheme_label ($folder)"
 
-        # For Nscales>1, analyze the summed reconstruction first to pin the
-        # reference slice. For Nscales==1, the sum and the single scale are
-        # identical so we skip the redundant sum analysis and let the mslr
-        # call pick the peak slice internally on the first scheme.
-        if Nscales > 1
-            X_sum = dropdims(sum(X, dims=5), dims=5)
-            slice_idx, tmap, Y = analyze_and_plot(X_sum, params,
-                "$label, $Nscales scales (sum)"; ref_slice_idx=cfg_ref_idx)
-            isnothing(cfg_ref_idx) && (cfg_ref_idx = slice_idx)
-            export_niftis(Y, tmap, "$(export_prefix)_$(Nscales)scales_sum", cfg_out)
-        end
-
-        slice_idx, tmaps, Yvols = analyze_and_plot_mslr(X, params, Nscales, patch_sizes,
-            "$label, $Nscales scales"; ref_slice_idx=cfg_ref_idx)
+        slice_idx, tmaps, Yvols, t_vol_sum, Y_masked_sum = analyze_and_plot_mslr(
+            X, params, Nscales, patch_sizes,
+            "$label, $Nscales scales"; ref_slice_idx=cfg_ref_idx, plot_sum=true, q=0.01)
         isnothing(cfg_ref_idx) && (cfg_ref_idx = slice_idx)
+        if Nscales > 1
+            export_niftis(Y_masked_sum, t_vol_sum, "$(export_prefix)_$(Nscales)scales_sum", cfg_out)
+        end
         export_niftis(Yvols, tmaps, patch_sizes, Nscales, export_prefix, cfg_out)
     end
 end
