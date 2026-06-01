@@ -76,7 +76,7 @@ using .FmriAnalysis
 
 ## Session scripts (`experiments/<session>.jl`)
 
-Each session script loads reconstructed volumes from disk, defines an `ExperimentParams`, and calls the analysis pipelines. The first reconstruction analysed establishes a reference slice index that is reused across all subsequent comparisons so that all plots show the same anatomical location.
+Each session script loads reconstructed volumes from disk, defines an `ExperimentParams`, and calls the analysis pipelines. The first reconstruction analyzed establishes a reference slice index that is reused across all subsequent comparisons so that all plots show the same anatomical location.
 
 Reconstructions compared per session may include:
 
@@ -173,4 +173,4 @@ include("test/runtests.jl")
 - Complex-valued input arrays are automatically converted to magnitude (`abs.()`) before fitting; a warning is printed when this occurs.
 - The analysis pipelines fit the GLM on brain voxels only. The brain mask is derived automatically via `bet_brain_mask` (FSL BET) and is not written to disk; for registration or surface analysis, use BET directly.
 - FDR thresholding (Benjamini-Hochberg, q < 0.05 by default) is applied automatically within `analyze_and_plot` and `analyze_and_plot_mslr`. The `fdr_correct` and `bonferroni_correct` functions are also available for standalone use on any returned t-map.
-- `analyze_and_plot_mslr` builds the GLM design matrix once and reuses it across all scales, then applies FDR thresholding independently per scale. The t-score colour scale and anatomical underlay are shared across scales to keep comparisons interpretable.
+- `analyze_and_plot_mslr` builds the GLM design matrix once and reuses it across all scales, then applies FDR thresholding independently per scale. The t-score color scale and anatomical underlay are shared across scales to keep comparisons interpretable.

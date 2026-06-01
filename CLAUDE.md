@@ -59,4 +59,4 @@ Standard reconstructions are 4-D `(nx, ny, nz, nt)`. MSLR reconstructions are 5-
 
 ### Experiment scripts
 
-Files in `experiments/` are named by session date (e.g. `20260409tap.jl`) and are structured for cell-by-cell execution in VS Code with the Julia extension (`# %%` cell markers). They are not importable modules. Each script sets `params` (an `ExperimentParams`) near the top; the first reconstruction analysed in a session establishes a `ref_slice_idx` that is passed to all subsequent calls to keep plots at the same anatomical location.
+Files in `experiments/` are named by session date (e.g. `20260409tap.jl`) and are structured for cell-by-cell execution in VS Code with the Julia extension (`# %%` cell markers). They are not importable modules. Each script sets `params` (an `ExperimentParams`) near the top; the first reconstruction analyzed in a session establishes a `ref_slice_idx` that is passed to all subsequent calls to keep plots at the same anatomical location.
