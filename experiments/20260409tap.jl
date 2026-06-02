@@ -27,17 +27,13 @@ end
 # ==============================================================================
 
 mslr_cfgs = [
-    "GLR_100itrs_tol=1e-3",
-    "LLR_100itrs_tol=1e-3",
     "G+LLR_100itrs_tol=1e-3",
-    "G+VLR_100itrs_tol=1e-3",
-    "G+L+VLR_100itrs_tol=1e-3",
 ]
 
 mslr_schemes = [
-    ("caipi_recon",    "CAIPI sampling",              "caipi"),
-    ("caipi_ts_recon", "time-shifted CAIPI sampling", "caipi_ts"),
     ("pd_recon",       "PD sampling",                 "pd"),
+    ("caipi_ts_recon", "time-shifted CAIPI sampling", "caipi_ts"),
+    ("caipi_recon",    "CAIPI sampling",              "caipi"),
 ]
 
 mslr_base = "/StorageRAID/rexfung/20260409tap/recon/mslr"
@@ -67,7 +63,7 @@ for folder in mslr_cfgs
 
         slice_idx, tmaps, Yvols, t_vol_sum, Y_masked_sum = analyze_and_plot_mslr(
             X, params, Nscales, patch_sizes,
-            "$label, $Nscales scales"; ref_slice_idx=cfg_ref_idx, plot_sum=true, q=0.01)
+            "$label, "; ref_slice_idx=cfg_ref_idx, plot_sum=true)
         isnothing(cfg_ref_idx) && (cfg_ref_idx = slice_idx)
         if Nscales > 1
             export_niftis(Y_masked_sum, t_vol_sum, "$(export_prefix)_$(Nscales)scales_sum", cfg_out)

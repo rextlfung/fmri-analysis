@@ -504,73 +504,89 @@ function plot_tmap_slices(t_vol::AbstractArray{<:Real,3};
     end
 
     sx, sy, sz = size(t_vol)
-    if isnothing(slice_indices)
-        abs_vol = abs.(t_vol)
-        peak_idx = all(isnan, abs_vol) ? CartesianIndex(sx ÷ 2, sy ÷ 2, sz ÷ 2) :
-                   argmax(replace(abs_vol, NaN => -Inf))
-        si = (x=peak_idx[1], y=peak_idx[2], z=peak_idx[3])
-    else
-        si = slice_indices
-    end
+
+    # Auto-detect top-2 peaks by absolute t-score in the current volume
+    abs_vol = abs.(t_vol)
+    abs_vol_inf = replace(abs_vol, NaN => -Inf)
+    all_nan = all(isnan, abs_vol)
+
+    peak1_cart = all_nan ? CartesianIndex(sx ÷ 2, sy ÷ 2, sz ÷ 2) : argmax(abs_vol_inf)
+
+    abs_vol_inf2 = copy(abs_vol_inf)
+    abs_vol_inf2[peak1_cart] = -Inf
+    peak2_cart = any(x -> x > -Inf, abs_vol_inf2) ?
+        argmax(abs_vol_inf2) : CartesianIndex(sx ÷ 2, sy ÷ 2, sz ÷ 2 + 1)
+
+    # Row 1: use provided slice_indices (ref alignment) or the detected peak
+    si1 = isnothing(slice_indices) ?
+        (x=peak1_cart[1], y=peak1_cart[2], z=peak1_cart[3]) : slice_indices
+    # Row 2: always the literal 2nd-highest |t| voxel
+    si2 = (x=peak2_cart[1], y=peak2_cart[2], z=peak2_cart[3])
 
     masked = Float32.(t_vol)
     masked[masked.>threshold[1].&&masked.<threshold[2]] .= NaN32
 
-    function get_slices(dim, idx)
-        sl_t = Matrix(selectdim(masked, dim, idx))
-        sl_u = isnothing(underlay) ? nothing : Matrix(selectdim(underlay, dim, idx))
-        return sl_t, sl_u
+    function get_slices(si)
+        function inner(dim, idx)
+            sl_t = Matrix(selectdim(masked, dim, idx))
+            sl_u = isnothing(underlay) ? nothing : Matrix(selectdim(underlay, dim, idx))
+            return sl_t, sl_u
+        end
+        return [
+            ("Axial (z=$(si.z))",     inner(3, si.z)...),
+            ("Coronal (y=$(si.y))",   inner(2, si.y)...),
+            ("Sagittal (x=$(si.x))", inner(1, si.x)...),
+        ]
     end
 
-    slices = [
-        ("Axial (z=$(si.z))",     get_slices(3, si.z)...),
-        ("Coronal (y=$(si.y))",   get_slices(2, si.y)...),
-        ("Sagittal (x=$(si.x))", get_slices(1, si.x)...),
-    ]
-
-    fig = CairoMakie.Figure(size=(1600, 900), backgroundcolor=:black)
+    fig = CairoMakie.Figure(size=(1600, 1200), backgroundcolor=:black)
     CairoMakie.Label(fig[0, 1:3],
-        "$title, t ∉ [$(round(threshold[1], digits=2)), $(round(threshold[2], digits=2))], max t = $(round(max_t, digits=2))";
+        "$title, max t = $(round(max_t, digits=2))";
         fontsize=18, color=:white, font=:bold)
 
     sym_range = maximum(abs.(collect(clim)))
 
-    for (col, (slab, sl_t, sl_u)) in enumerate(slices)
-        ax = CairoMakie.Axis(fig[1, col];
-            title=slab,
-            titlecolor=:white,
-            backgroundcolor=:black,
-            aspect=CairoMakie.DataAspect(),
-            yreversed=false,
-            xticksvisible=false,
-            yticksvisible=false,
-            xticklabelsvisible=false,
-            yticklabelsvisible=false)
+    local colorbar_hm
+    for (row, slices) in enumerate([get_slices(si1), get_slices(si2)])
+        for (col, (slab, sl_t, sl_u)) in enumerate(slices)
+            ax = CairoMakie.Axis(fig[row, col];
+                title=slab,
+                titlecolor=:white,
+                backgroundcolor=:black,
+                aspect=CairoMakie.DataAspect(),
+                yreversed=false,
+                xticksvisible=false,
+                yticksvisible=false,
+                xticklabelsvisible=false,
+                yticklabelsvisible=false)
 
-        if !isnothing(sl_u)
-            u_min, u_max = if !isnothing(underlay_range)
-                Float32(underlay_range[1]), Float32(underlay_range[2])
-            else
-                minimum(sl_u), maximum(sl_u)
+            if !isnothing(sl_u)
+                u_min, u_max = if !isnothing(underlay_range)
+                    Float32(underlay_range[1]), Float32(underlay_range[2])
+                else
+                    minimum(sl_u), maximum(sl_u)
+                end
+                u_norm = (sl_u .- u_min) ./ (u_max - u_min + eps())
+                CairoMakie.heatmap!(ax, u_norm; colormap=:grays, colorrange=(0, 1))
             end
-            u_norm = (sl_u .- u_min) ./ (u_max - u_min + eps())
-            CairoMakie.heatmap!(ax, u_norm; colormap=:grays, colorrange=(0, 1))
+
+            hm = CairoMakie.heatmap!(ax, sl_t;
+                # Custom diverging colormap: Cyan -> Blue -> Black -> Red -> Yellow
+                colormap=cgrad([:cyan, :blue, :black, :red, :yellow],
+                               [0.0, 0.45, 0.5, 0.55, 1.0]),
+                colorrange=(-sym_range, sym_range),
+                nan_color=(:black, 0.0))
+
+            row == 1 && col == 3 && (colorbar_hm = hm)
         end
-
-        hm = CairoMakie.heatmap!(ax, sl_t;
-            # Custom diverging colormap: Cyan -> Blue -> Black -> Red -> Yellow
-            colormap=cgrad([:cyan, :blue, :black, :red, :yellow],
-                           [0.0, 0.45, 0.5, 0.55, 1.0]),
-            colorrange=(-sym_range, sym_range),
-            nan_color=(:black, 0.0))
-
-        col == 3 && CairoMakie.Colorbar(fig[1, 4], hm;
-            label="t-score",
-            labelcolor=:white,
-            tickcolor=:white,
-            ticklabelcolor=:white,
-            width=16)
     end
+
+    CairoMakie.Colorbar(fig[1:2, 4], colorbar_hm;
+        label="t-score",
+        labelcolor=:white,
+        tickcolor=:white,
+        ticklabelcolor=:white,
+        width=16)
 
     return fig
 end
@@ -660,10 +676,9 @@ function analyze_and_plot(X::AbstractArray{<:Number,4}, params::ExperimentParams
     t_map = zeros(Float32, nx * ny * nz)
     t_map[brain_mask_flat] .= t_map_brain
 
-    # ── FDR display threshold ───────────────────────────────────────────────
+    # ── Display threshold: top 1% of brain t-scores ─────────────────────────
     df = nt - size(design_matrix, 2)
-    _, _, _, t_thr = fdr_correct(t_map_brain, df)
-    display_threshold = isnan(t_thr) ? quantile(abs.(t_map_brain), 0.99) : t_thr
+    display_threshold = quantile(abs.(t_map_brain), 0.99)
     display_threshold = max(display_threshold, eps(Float32))
 
     # Visualize
@@ -690,7 +705,7 @@ function analyze_and_plot(X::AbstractArray{<:Number,4}, params::ExperimentParams
         slice_indices=slice_idx,
         threshold=[-display_threshold, display_threshold],
         underlay_range=underlay_range,
-        title="t-scores for $title_base (FDR q<0.05)")
+        title="t-scores for $title_base (top 1%)")
     display(fig)
 
     return slice_idx, t_vol, Y_masked
@@ -717,7 +732,6 @@ function analyze_and_plot_mslr(
     ref_slice_idx=nothing,
     brain_mask=nothing,
     tmp_dir::String="/tmp",
-    q::Real=0.05,
     threshold_quantile::Real=0.99,
     plot_summary::Bool=false,
     plot_sum::Bool=false)
@@ -749,7 +763,6 @@ function analyze_and_plot_mslr(
     t_maps = Vector{Vector{Float32}}(undef, Nscales)
     Y_vols = Vector{Array{Float32,4}}(undef, Nscales)
     underlays = Vector{Array{Float32,3}}(undef, Nscales)
-    fdr_thresholds = fill(NaN, Nscales)
 
     for scale in 1:Nscales
         GC.gc()
@@ -771,7 +784,6 @@ function analyze_and_plot_mslr(
         t_maps[scale] = t_map
 
         underlays[scale] = dropdims(mean(Y_masked, dims=4), dims=4)
-        _, _, _, fdr_thresholds[scale] = fdr_correct(t_map_brain, df; q=q)
     end
 
     # ── Sum reconstruction: slice index and/or same-scale plot ─────────────
@@ -779,7 +791,6 @@ function analyze_and_plot_mslr(
     t_sum_vol_out = nothing
     Y_sum_masked_out = nothing
     underlay_sum_out = nothing
-    fdr_thr_sum = NaN
 
     if plot_sum || isnothing(ref_slice_idx)
         GC.gc()
@@ -800,8 +811,6 @@ function analyze_and_plot_mslr(
             t_sum_vol_out = t_sum_vol_local
             Y_sum_masked_out = Float32.(Y_sum) .* brain_mask
             underlay_sum_out = dropdims(mean(Y_sum_masked_out, dims=4), dims=4)
-            _, _, _, fdr_thr_sum_val = fdr_correct(t_sum_brain_vec, df; q=q)
-            fdr_thr_sum = fdr_thr_sum_val
         end
         GC.gc()
     end
@@ -825,11 +834,14 @@ function analyze_and_plot_mslr(
     # ── Pass 2: plot sum (same scale), then per-scale ─────────────────────
     if plot_sum && !isnothing(t_sum_vol_out)
         GC.gc()
-        sum_title = Nscales > 1 ? "$title_base, sum (FDR q<$q)" : "$title_base (FDR q<$q)"
-        plot_summary && tmap_summary(t_sum_brain_vec; title=sum_title)
-        sum_thr = isnan(fdr_thr_sum) ?
-            quantile(abs.(t_sum_brain_vec), threshold_quantile) : Float64(fdr_thr_sum)
+        sum_thr = quantile(abs.(t_sum_brain_vec), threshold_quantile)
         sum_thr = max(Float32(sum_thr), eps(Float32))
+        pct = round(Int, threshold_quantile * 100)
+        nscales_str = "$Nscales $(Nscales == 1 ? "scale" : "scales")"
+        sum_title = Nscales > 1 ?
+            "$title_base, $nscales_str, sum, $(pct)th percentile |t| > $(round(sum_thr, digits=2))" :
+            "$title_base, $nscales_str, $(pct)th percentile |t| > $(round(sum_thr, digits=2))"
+        plot_summary && tmap_summary(t_sum_brain_vec; title=sum_title)
         fig_sum = plot_tmap_slices(
             t_sum_vol_out;
             underlay=underlay_sum_out,
@@ -844,20 +856,17 @@ function analyze_and_plot_mslr(
     # Skip per-scale plots when Nscales==1 (sum and single scale are identical).
     for scale in (Nscales > 1 ? (1:Nscales) : ())
         GC.gc()
-        scale_title = "$title_base, scale = $(patch_sizes[scale]) (FDR q<$q)"
         t_map = t_maps[scale]
         underlay = underlays[scale]
 
-        plot_summary && tmap_summary(t_map[brain_mask_flat]; title=scale_title)
-
-        # Per-scale display threshold
-        scale_thr = fdr_thresholds[scale]
-        display_threshold = if isnan(scale_thr)
-            quantile(abs.(t_map[brain_mask_flat]), threshold_quantile)
-        else
-            scale_thr
-        end
+        # Per-scale display threshold: top threshold_quantile of brain t-scores
+        display_threshold = quantile(abs.(t_map[brain_mask_flat]), threshold_quantile)
         display_threshold = max(display_threshold, eps(Float32))
+
+        pct = round(Int, threshold_quantile * 100)
+        scale_title = "$title_base, $Nscales $(Nscales == 1 ? "scale" : "scales"), scale = $(patch_sizes[scale]), $(pct)th percentile |t| > $(round(display_threshold, digits=2))"
+
+        plot_summary && tmap_summary(t_map[brain_mask_flat]; title=scale_title)
 
         # fig_flat = plot_tmap_flat(t_map[brain_mask_flat]; threshold=display_threshold, title="t-scores for $title_base")
         # display(fig_flat)
