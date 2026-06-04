@@ -11,23 +11,8 @@ let fsldir = get(ENV, "FSLDIR", expanduser("~/fsl"))
     fsl_bin ∈ path_entries || (ENV["PATH"] = fsl_bin * ":" * ENV["PATH"])
 end
 
-# ==============================================================================
-# MSLR reconstructions — regularisation comparison (5 configurations)
-# ==============================================================================
-# Compares activation maps across 5 regularisation configurations for the
-# 20260409 tapping session, all at tol=1e-3:
-#   - GLR        (Nscales=1, global low-rank)
-#   - LLR        (Nscales=1, locally low-rank)
-#   - G+LLR      (Nscales=2, global + local low-rank)
-#   - G+VLR      (Nscales=2, global + voxelwise low-rank)
-#   - G+L+VLR    (Nscales=3, global + local + voxelwise low-rank)
-# Each configuration contains 3 datasets (CAIPI / time-shifted CAIPI / PD
-# sampling); plots within a configuration are pinned to the same anatomical
-# slice. All folders contain nt=375 frames (pre-trimmed) → n_discard=0.
-# ==============================================================================
-
 mslr_cfgs = [
-    "G+LLR_100itrs_tol=1e-3",
+    "G+L+L_5xlambda",
 ]
 
 mslr_schemes = [
@@ -44,6 +29,38 @@ params = ExperimentParams(
     durations=[fill(20.0f0, 9), fill(20.0f0, 9)],
     contrast=[1.0f0, -1.0f0, 0.0f0],
     n_discard=0)
+
+basic_recon_methods = [
+    ("rss",                        "RSS",          "rss"),
+    ("cgs_i100",                   "CG-SENSE",     "cgs"),
+    ("bart_l1_r0.0050_tv_r0.0050", "BART (L1+TV)", "bart"),
+]
+
+basic_base = "/StorageRAID/rexfung/20260409tap/recon/basic"
+
+# ── Basic reconstructions ──────────────────────────────────────────────────────
+
+let
+    basic_out = joinpath(basic_base, "fsleyes")
+    mkpath(basic_out)
+    basic_ref_idx = nothing
+
+    for (scheme_base, scheme_label, scheme_prefix) in mslr_schemes
+        for (recon_suffix, recon_label, recon_prefix) in basic_recon_methods
+            fn = joinpath(basic_base, "$(scheme_base)_$(recon_suffix).mat")
+            vars = matread(fn)
+            X = vars["img"]
+            label = "$scheme_label + $recon_label"
+
+            slice_idx, t_vol, Y_masked = analyze_and_plot(
+                X, params, label; ref_slice_idx=basic_ref_idx)
+            isnothing(basic_ref_idx) && (basic_ref_idx = slice_idx)
+            export_niftis(Y_masked, t_vol, "$(scheme_prefix)_$(recon_prefix)", basic_out)
+        end
+    end
+end
+
+# ── MSLR reconstructions ───────────────────────────────────────────────────────
 
 for folder in mslr_cfgs
     cfg_out = joinpath(mslr_base, folder, "fsleyes")
