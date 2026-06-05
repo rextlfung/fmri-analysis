@@ -630,7 +630,7 @@ end
 
 """
     analyze_and_plot(X, params, title_base; ref_slice_idx=nothing,
-                     brain_mask=nothing, tmp_dir="/tmp")
+                     brain_mask=nothing, design_matrix=nothing, tmp_dir="/tmp")
 
 Run the full GLM pipeline on a single 4-D volume and display an orthogonal
 slice plot. Returns the masked 4-D magnitude timeseries.
@@ -642,7 +642,7 @@ slice plot. Returns the masked 4-D magnitude timeseries.
 """
 function analyze_and_plot(X::AbstractArray{<:Number,4}, params::ExperimentParams,
     title_base::String; ref_slice_idx=nothing,
-    brain_mask=nothing, tmp_dir::String="/tmp")
+    brain_mask=nothing, design_matrix=nothing, tmp_dir::String="/tmp")
 
     # Discard instructional frames
     Y = X[:, :, :, (params.n_discard+1):end]
@@ -669,15 +669,15 @@ function analyze_and_plot(X::AbstractArray{<:Number,4}, params::ExperimentParams
     Y_mat = Matrix{Float32}(transpose(reshape(Float32.(Y), :, nt)))
     Y_mat_brain = Y_mat[:, brain_mask_flat]
 
-    t_map_brain, _, design_matrix = run_glm(Y_mat_brain, params.onsets, params.durations,
-        params.contrast, nt, params.tr)
+    t_map_brain, _, dm = run_glm(Y_mat_brain, params.onsets, params.durations,
+        params.contrast, nt, params.tr; design_matrix=design_matrix)
 
     # Reconstruct full t_map with zeros outside the brain
     t_map = zeros(Float32, nx * ny * nz)
     t_map[brain_mask_flat] .= t_map_brain
 
     # ── Display threshold: top 1% of brain t-scores ─────────────────────────
-    df = nt - size(design_matrix, 2)
+    df = nt - size(dm, 2)
     display_threshold = quantile(abs.(t_map_brain), 0.99)
     display_threshold = max(display_threshold, eps(Float32))
 
@@ -705,7 +705,7 @@ function analyze_and_plot(X::AbstractArray{<:Number,4}, params::ExperimentParams
         slice_indices=slice_idx,
         threshold=[-display_threshold, display_threshold],
         underlay_range=underlay_range,
-        title="t-scores for $title_base (top 1%)")
+        title="t-scores for $title_base, 99th percentile |t| > $(round(display_threshold, digits=2))")
     display(fig)
 
     return slice_idx, t_vol, Y_masked
