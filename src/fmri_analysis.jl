@@ -23,6 +23,7 @@ module FmriAnalysis
 using Statistics
 using LinearAlgebra
 using FFTW
+using MAT
 using NIfTI
 using Printf
 using Plots
@@ -33,7 +34,7 @@ using SpecialFunctions: gamma
 export canonical_hrf, build_design_matrix, fit_glm, compute_tscores, run_glm,
        t_to_p, fdr_correct, bonferroni_correct, bet_brain_mask,
        ExperimentParams, plot_design_matrix, tmap_summary, plot_tmap_flat,
-       plot_tmap_slices, analyze_and_plot, export_niftis
+       plot_tmap_slices, analyze_and_plot, export_niftis, compare_recons
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -629,6 +630,7 @@ end
 
 
 include("../scripts/run_analysis.jl")
+include("../scripts/compare_recons.jl")
 include("export.jl")
 
 end # module FmriAnalysis

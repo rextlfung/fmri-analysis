@@ -34,8 +34,6 @@ basic_recon_methods = [
 
 basic_base = "/StorageRAID/rexfung/20260409tap/recon/basic"
 
-
-
 params = ExperimentParams(
     tr=0.8f0,
     onsets=[collect(0.0f0:40.0f0:320.0f0), collect(20.0f0:40.0f0:320.0f0)],
@@ -61,8 +59,8 @@ for folder in mslr_cfgs
         label = "$scheme_label ($folder)"
 
         slice_idx, tmaps, Yvols, t_vol_sum, Y_masked_sum = analyze_and_plot(
-            X, params, Nscales, patch_sizes,
-            "$label, "; ref_slice_idx=ref_idx, plot_sum=true)
+            X, params, Nscales, patch_sizes, label;
+            ref_slice_idx=ref_idx, plot_sum=true)
         isnothing(ref_idx) && (global ref_idx = slice_idx)
         if Nscales > 1
             export_niftis(Y_masked_sum, t_vol_sum, "$(export_prefix)_$(Nscales)scales_sum", cfg_out)
@@ -90,8 +88,8 @@ for (scheme_base, scheme_label, scheme_prefix) in schemes
         label = "$scheme_label + $recon_label"
 
         slice_idx, t_vol, Y_masked = analyze_and_plot(
-            X, params, label; ref_slice_idx=ref_idx,
-            brain_mask=basic_mask, design_matrix=design_mat)
+            X, params, label;
+            ref_slice_idx=ref_idx, brain_mask=basic_mask, design_matrix=design_mat)
         isnothing(ref_idx) && (global ref_idx = slice_idx)
         export_niftis(Y_masked, t_vol, "$(scheme_prefix)_$(recon_prefix)", basic_out)
     end

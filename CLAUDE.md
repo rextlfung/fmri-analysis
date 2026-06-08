@@ -28,7 +28,12 @@ using .FmriAnalysis
 
 ### Module layout
 
-`src/fmri_analysis.jl` defines the `FmriAnalysis` module and, at the end of the file, `include`s `../scripts/run_analysis.jl` (the high-level analysis pipelines) and `src/export.jl` (NIfTI export helpers). There is no separate entry point — the three files together constitute the module. Both included files rely on their dependencies (`Statistics`, `NIfTI`, `Printf`, and the section 1–7 functions) being imported/defined by the parent module and must not add their own `using` statements. Note the unusual direction: a module under `src/` reaches up into `../scripts/` for `run_analysis.jl`.
+`src/fmri_analysis.jl` defines the `FmriAnalysis` module and, at the end of the file, `include`s three files:
+- `../scripts/run_analysis.jl` — high-level `analyze_and_plot` pipelines
+- `../scripts/compare_recons.jl` — `compare_recons` multi-reconstruction comparison driver
+- `src/export.jl` — NIfTI export helpers
+
+There is no separate entry point — these four files together constitute the module. All included files rely on their dependencies (`Statistics`, `MAT`, `NIfTI`, `Printf`, `CairoMakie`, and the section 1–7 functions) being imported/defined by the parent module and must not add their own `using` statements. Note the unusual direction: a module under `src/` reaches up into `../scripts/` for the pipeline files.
 
 ### GLM pipeline
 
@@ -61,6 +66,21 @@ To run a batch script from the shell: `FSLDIR=... FSLOUTPUTTYPE=NIFTI_GZ PATH="$
 
 Standard reconstructions are 4-D `(nx, ny, nz, nt)`. MSLR reconstructions are 5-D `(nx, ny, nz, nt, Nscales)`. The 5-D method of `analyze_and_plot` handles the 5-D case: it builds one shared brain mask from the temporal mean of the summed reconstruction, builds the design matrix once, then loops over scales.
 
+### compare_recons pipeline (`scripts/compare_recons.jl`)
+
+`compare_recons(schemes, recons, params; threshold_quantile=0.99f0)` loops over sampling schemes and produces one CairoMakie figure per scheme. Each figure has three rows (axial / coronal / sagittal) and one column per reconstruction. Slices are centred at the peak positive t-score voxel of the first recon and are shared across all columns.
+
+`recons` is a vector of tuples with the following shapes:
+- `(:basic, base_dir, identifier, label)` — loads `base_dir/$(scheme_base)_$(identifier).mat`, key `"img"` (4-D)
+- `(:mslr,  base_dir, cfg,        label)` — loads `base_dir/$(cfg)/$(scheme_base).mat`, key `"X"` (5-D); **sums all scales**
+- `(:mslr,  base_dir, cfg,        label, n::Int)` — same file; **extracts the n-th scale** (1-based)
+
+The brain mask and GLM design matrix are computed once from the first recon and shared across all recons within a scheme.
+
+Column titles show `"<label>\n99th |t| = X.XX  max |t| = X.XX"`. The t-score colormap range is the global max |t| across all recons; the display threshold is the 99th-percentile |t| of the first recon's brain voxels.
+
 ### Experiment scripts
 
 Files in `experiments/` are named by session date (e.g. `20260409tap.jl`) and are structured for cell-by-cell execution in VS Code with the Julia extension (`# %%` cell markers). They are not importable modules. Each script sets `params` (an `ExperimentParams`) near the top; the first reconstruction analyzed in a session establishes a `ref_slice_idx` that is passed to all subsequent calls to keep plots at the same anatomical location.
+
+`<session>_compare_recons.jl` companion scripts (e.g. `20260409tap_compare_recons.jl`) use `compare_recons` to produce side-by-side comparison figures. They define `schemes`, `recons`, and `params` then call `compare_recons(schemes, recons, params)`.

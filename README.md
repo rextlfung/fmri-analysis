@@ -8,12 +8,16 @@ Julia pipeline for task-based fMRI GLM analysis, designed to compare activation 
 
 ```
 src/
-  fmri_analysis.jl  # Module FmriAnalysis: HRF, design matrix, GLM, correction, plotting
-  export.jl         # NIfTI export helpers (included inside FmriAnalysis)
+  fmri_analysis.jl       # Module FmriAnalysis: HRF, design matrix, GLM, correction, plotting
+  export.jl              # NIfTI export helpers (included inside FmriAnalysis)
+scripts/
+  run_analysis.jl        # analyze_and_plot pipelines (included inside FmriAnalysis)
+  compare_recons.jl      # compare_recons driver (included inside FmriAnalysis)
 experiments/
-  <session>.jl      # Per-session analysis scripts (one file per scan date)
+  <session>.jl           # Per-session analysis scripts (one file per scan date)
+  <session>_compare_recons.jl  # Side-by-side comparison figures for the same session
 test/
-  runtests.jl       # Synthetic-data unit tests
+  runtests.jl            # Synthetic-data unit tests
 ```
 
 ---
@@ -60,7 +64,15 @@ using .FmriAnalysis
 - `analyze_and_plot(X, params, title; ref_slice_idx=nothing, brain_mask=nothing, design_matrix=nothing, tmp_dir="/tmp")` (4-D `X`) — Runs the full GLM pipeline on a single 4-D volume: derives a brain mask via `bet_brain_mask` (or reuses a passed-in one), fits the GLM on brain voxels only, prints a `tmap_summary`, and displays orthogonal slice plots thresholded at the 99th percentile of |t|. Returns `(slice_idx, t_vol, Y_masked)`.
 - `analyze_and_plot(X, params, Nscales, patch_sizes, title; ref_slice_idx=nothing, brain_mask=nothing, tmp_dir="/tmp", threshold_quantile=0.99, plot_summary=false, plot_sum=false)` (5-D `X`) — Runs the same pipeline on each scale of a 5-D MSLR reconstruction. The design matrix is built once and reused across all scales. Brain mask is derived from the temporal mean of the summed reconstruction (or reused if passed in). Returns `(slice_idx, t_vols, Y_vols, t_sum_vol, Y_sum_masked)`.
 
-### 9. NIfTI Export (`src/export.jl`)
+### 9. Reconstruction Comparison (`scripts/compare_recons.jl`)
+- `compare_recons(schemes, recons, params; threshold_quantile=0.99f0)` — For each sampling scheme, runs the GLM on every reconstruction and displays a single CairoMakie figure. The figure has one column per reconstruction and three rows (axial / coronal / sagittal) centred at the peak positive t-score voxel of the first recon; all columns share the same slice indices. Column titles show the 99th-percentile and max |t| for that recon. The brain mask and design matrix are computed once per scheme (from the first recon) and shared.
+
+  `recons` entries are tuples of one of three shapes:
+  - `(:basic, base_dir, identifier, label)` — 4-D reconstruction from `base_dir/$(scheme_base)_$(identifier).mat`
+  - `(:mslr,  base_dir, cfg, label)` — 5-D MSLR reconstruction; sums all scales
+  - `(:mslr,  base_dir, cfg, label, n::Int)` — same file; extracts the n-th scale (1-based)
+
+### 10. NIfTI Export (`src/export.jl`)
 - `export_niftis(Y_masked, t_vol, prefix, out_dir)` — Exports a post-discard magnitude timeseries and t-score volume as NIfTI files for a single 4-D reconstruction.
 - `export_niftis(Y_vols, t_vols, patch_sizes, Nscales, prefix, out_dir)` — Same for a 5-D MSLR reconstruction; writes one magnitude + t-map pair per scale.
 
@@ -76,9 +88,11 @@ using .FmriAnalysis
 
 ---
 
-## Session scripts (`experiments/<session>.jl`)
+## Session scripts (`experiments/`)
 
-Each session script loads reconstructed volumes from disk, defines an `ExperimentParams`, and calls the analysis pipelines. The first reconstruction analyzed establishes a reference slice index that is reused across all subsequent comparisons so that all plots show the same anatomical location.
+Each `<session>.jl` script loads reconstructed volumes from disk, defines an `ExperimentParams`, and calls `analyze_and_plot` directly. The first reconstruction analyzed establishes a reference slice index that is reused across all subsequent comparisons so that all plots show the same anatomical location.
+
+Each `<session>_compare_recons.jl` companion script uses `compare_recons` to produce side-by-side comparison figures across reconstruction methods. It defines `schemes` (3-tuples `(file_base, label, _)`) and `recons` (4- or 5-tuples as described in section 9) then calls `compare_recons(schemes, recons, params)`.
 
 Reconstructions compared per session may include:
 
