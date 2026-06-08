@@ -64,7 +64,7 @@ idx_5scales, _, _ = analyze_and_plot(Y, params,
 
 if ndims(X) > 4
     X_flip = reverse(X, dims=1)
-    analyze_and_plot_mslr(X_flip, params, Nscales, patch_sizes,
+    analyze_and_plot(X_flip, params, Nscales, patch_sizes,
         "Gaussian random sampling and MSLR ($Nscales scales) recon";
         ref_slice_idx=idx_5scales)
 end

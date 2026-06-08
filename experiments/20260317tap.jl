@@ -62,6 +62,6 @@ for (fn, label) in mslr_recons
     patch_sizes = vars["patch_sizes"]
     idx, _, _ = analyze_and_plot(dropdims(sum(X, dims=5), dims=5), params,
         "$label, $Nscales scales (sum)")
-    analyze_and_plot_mslr(X, params, Nscales, patch_sizes,
+    analyze_and_plot(X, params, Nscales, patch_sizes,
         "$label, $Nscales scales"; ref_slice_idx=idx)
 end

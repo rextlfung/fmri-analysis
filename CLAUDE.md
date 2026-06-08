@@ -28,7 +28,7 @@ using .FmriAnalysis
 
 ### Module layout
 
-`src/fmri_analysis.jl` defines the `FmriAnalysis` module and `include`s `src/export.jl` at the end of the file. There is no separate entry point — both files together constitute the module. `export.jl` relies on `NIfTI` and `Printf` being imported by the parent module and must not add its own `using` statements.
+`src/fmri_analysis.jl` defines the `FmriAnalysis` module and, at the end of the file, `include`s `../scripts/run_analysis.jl` (the high-level analysis pipelines) and `src/export.jl` (NIfTI export helpers). There is no separate entry point — the three files together constitute the module. Both included files rely on their dependencies (`Statistics`, `NIfTI`, `Printf`, and the section 1–7 functions) being imported/defined by the parent module and must not add their own `using` statements. Note the unusual direction: a module under `src/` reaches up into `../scripts/` for `run_analysis.jl`.
 
 ### GLM pipeline
 
@@ -40,7 +40,11 @@ The GLM is fit on **brain voxels only**. The workflow is:
 3. Fit GLM on the masked subset
 4. Reconstruct a full-size t-map by placing brain t-scores back into a zeros array
 
-`analyze_and_plot` always returns three values: `(slice_idx, t_vol, Y_masked)`. All call sites must destructure all three — assigning to a single variable captures a tuple, which will fail when used as a `ref_slice_idx`.
+`analyze_and_plot` is a single function with two methods dispatched on input dimensionality (see `scripts/run_analysis.jl`):
+- The **4-D method** `analyze_and_plot(X::…,4}, params, title_base; …)` returns three values: `(slice_idx, t_vol, Y_masked)`.
+- The **5-D method** `analyze_and_plot(X::…,5}, params, Nscales, patch_sizes, title_base; …)` returns five values: `(slice_idx, t_vols, Y_vols, t_sum_vol, Y_sum_masked)`.
+
+Destructure exactly the number of values the relevant method returns — assigning to a single variable captures a tuple, which will fail when used as a `ref_slice_idx`.
 
 ### Brain masking
 
@@ -55,7 +59,7 @@ To run a batch script from the shell: `FSLDIR=... FSLOUTPUTTYPE=NIFTI_GZ PATH="$
 
 ### MSLR data format
 
-Standard reconstructions are 4-D `(nx, ny, nz, nt)`. MSLR reconstructions are 5-D `(nx, ny, nz, nt, Nscales)`. `analyze_and_plot_mslr` handles the 5-D case: it builds one shared brain mask from the temporal mean of the summed reconstruction, builds the design matrix once, then loops over scales.
+Standard reconstructions are 4-D `(nx, ny, nz, nt)`. MSLR reconstructions are 5-D `(nx, ny, nz, nt, Nscales)`. The 5-D method of `analyze_and_plot` handles the 5-D case: it builds one shared brain mask from the temporal mean of the summed reconstruction, builds the design matrix once, then loops over scales.
 
 ### Experiment scripts
 

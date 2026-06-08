@@ -54,9 +54,10 @@ using .FmriAnalysis
 ### 7. Experiment Parameters
 - `ExperimentParams` — Struct holding `tr`, `onsets`, `durations`, `contrast`, and `n_discard` (leading frames to drop before fitting).
 
-### 8. Analysis Pipelines
-- `analyze_and_plot(X, params, title)` — Runs the full GLM pipeline on a single 4-D volume: derives a brain mask via `bet_brain_mask`, fits the GLM on brain voxels only, applies FDR correction, and displays orthogonal slice plots. Returns `(slice_idx, t_vol, Y_masked)`.
-- `analyze_and_plot_mslr(X, params, Nscales, patch_sizes, title)` — Runs the same pipeline on each scale of a 5-D MSLR reconstruction. The design matrix is built once and reused across all scales. Brain mask is derived from the temporal mean of the summed reconstruction. Returns `(slice_idx, t_vols, Y_vols)`.
+### 8. Analysis Pipelines (`scripts/run_analysis.jl`)
+`analyze_and_plot` is a single function with two methods dispatched on input dimensionality:
+- `analyze_and_plot(X, params, title)` (4-D `X`) — Runs the full GLM pipeline on a single 4-D volume: derives a brain mask via `bet_brain_mask`, fits the GLM on brain voxels only, and displays orthogonal slice plots. Returns `(slice_idx, t_vol, Y_masked)`.
+- `analyze_and_plot(X, params, Nscales, patch_sizes, title)` (5-D `X`) — Runs the same pipeline on each scale of a 5-D MSLR reconstruction. The design matrix is built once and reused across all scales. Brain mask is derived from the temporal mean of the summed reconstruction. Returns `(slice_idx, t_vols, Y_vols, t_sum_vol, Y_sum_masked)`.
 
 ### 9. NIfTI Export (`src/export.jl`)
 - `export_niftis(Y_masked, t_vol, prefix, out_dir)` — Exports a post-discard magnitude timeseries and t-score volume as NIfTI files for a single 4-D reconstruction.
@@ -153,8 +154,8 @@ ref_idx, t_vol, Y_masked = analyze_and_plot(Y, params, "My recon label")
 using MAT
 vars = matread("path/to/mslr.mat")
 X = vars["X"]
-analyze_and_plot_mslr(X, params, Int(vars["Nscales"]), vars["patch_sizes"],
-    "MSLR recon"; ref_slice_idx=ref_idx, q=0.05)
+analyze_and_plot(X, params, Int(vars["Nscales"]), vars["patch_sizes"],
+    "MSLR recon"; ref_slice_idx=ref_idx)
 ```
 
 ### Running tests
@@ -172,5 +173,5 @@ include("test/runtests.jl")
 
 - Complex-valued input arrays are automatically converted to magnitude (`abs.()`) before fitting; a warning is printed when this occurs.
 - The analysis pipelines fit the GLM on brain voxels only. The brain mask is derived automatically via `bet_brain_mask` (FSL BET) and is not written to disk; for registration or surface analysis, use BET directly.
-- FDR thresholding (Benjamini-Hochberg, q < 0.05 by default) is applied automatically within `analyze_and_plot` and `analyze_and_plot_mslr`. The `fdr_correct` and `bonferroni_correct` functions are also available for standalone use on any returned t-map.
-- `analyze_and_plot_mslr` builds the GLM design matrix once and reuses it across all scales, then applies FDR thresholding independently per scale. The t-score color scale and anatomical underlay are shared across scales to keep comparisons interpretable.
+- `fdr_correct` and `bonferroni_correct` are available for multiple-comparisons correction on any returned t-map. The display threshold in `analyze_and_plot` is percentile-based (top 1% of brain t-scores by default).
+- The 5-D method of `analyze_and_plot` builds the GLM design matrix once and reuses it across all scales, thresholding independently per scale. The t-score color scale and anatomical underlay are shared across scales to keep comparisons interpretable.

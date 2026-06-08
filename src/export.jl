@@ -35,7 +35,7 @@ end
     export_niftis(Y_vols, t_vols, patch_sizes, Nscales, prefix, out_dir)
 
 5-D method — Takes the vectors of 4-D masked timeseries and 3-D t-maps
-returned by `analyze_and_plot_mslr`.
+returned by the 5-D method of `analyze_and_plot`.
 
 Writes per scale (skipping any file that already exists):
   - `<prefix>_<N>scales_patchsize<P>_mag.nii`  : 4-D masked magnitude timeseries
