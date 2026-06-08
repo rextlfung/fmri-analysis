@@ -1,4 +1,4 @@
-using MAT, NIfTI, Revise
+using MAT, NIfTI, Revise, Statistics
 includet("../src/fmri_analysis.jl")
 using .FmriAnalysis
 
@@ -20,6 +20,8 @@ basic_recon_methods = [
 basic_base = "/StorageRAID/rexfung/20260409tap/recon/basic"
 
 mslr_cfgs = [
+    "G+L+L_3xlambda",
+    "G+L+L_4xlambda",
     "G+L+L_5xlambda",
 ]
 
@@ -48,7 +50,7 @@ let
     # anatomy and scan timing.
     probe_Y = matread(joinpath(basic_base, "$(schemes[1][1])_$(basic_recon_methods[1][1]).mat"))["img"]
     probe_Y = probe_Y[:, :, :, (params.n_discard+1):end]
-    basic_mask = bet_brain_mask(dropdims(mean(Float32.(probe_Y), dims=4), dims=4))
+    basic_mask = bet_brain_mask(dropdims(mean(Float32.(abs.(probe_Y)), dims=4), dims=4))
     design_mat = build_design_matrix(params.onsets, params.durations, size(probe_Y, 4), params.tr)
 
     for (scheme_base, scheme_label, scheme_prefix) in schemes
