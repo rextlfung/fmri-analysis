@@ -31,7 +31,7 @@ using .FmriAnalysis
 - `canonical_hrf(tr)` — SPM-style double-gamma HRF sampled at `tr` seconds. Uses `SpecialFunctions.gamma`.
 
 ### 2. Design Matrix
-- `build_design_matrix(onsets, durations, n_scans, tr)` — Constructs an `(n_scans × n_conditions + 1)` GLM design matrix via FFT-based convolution with 16× temporal oversampling. Last column is the intercept.
+- `build_design_matrix(onsets, durations, n_scans, tr)` — Constructs an `(n_scans × n_conditions + 1)` GLM design matrix via FFT-based convolution with 16× temporal oversampling. The HRF is unit-area normalized so a sustained stimulus yields a regressor amplitude of ≈1; this is a global per-column scale and does not affect t-maps. Last column is the intercept.
 
 ### 3. GLM Fitting & Contrasts
 - `fit_glm(X, Y)` — OLS fit returning `β`, residuals, and `(X'X)⁻¹`.

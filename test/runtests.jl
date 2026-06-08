@@ -20,7 +20,10 @@ using .FmriAnalysis
         X = build_design_matrix(onsets, durations, n_scans, 0.8)
         @test size(X) == (200, 3)          # 2 conditions + intercept
         @test all(X[:, end] .== 1.0)       # intercept column is all-ones
-        @test all(-0.1 .≤ X[:, 1] .≤ 1.1) # regressor values are bounded
+        # Unit-area HRF normalization → regressor is O(1): peaks near 1 for a
+        # sustained block, with a modest negative undershoot from the HRF.
+        @test 0.9 ≤ maximum(X[:, 1]) ≤ 1.2   # unit-ish peak (guards the normalization)
+        @test minimum(X[:, 1]) ≥ -0.2        # modest HRF undershoot
     end
 
     @testset "GLM recovers known β" begin
@@ -28,7 +31,7 @@ using .FmriAnalysis
         n_scans, n_vox = 120, 30
         beta_true = [3.0, -1.5, 5.0]
         X_design = [randn(n_scans, 2) ones(n_scans)]
-        Y = X_design * beta_true' .+ 0.05 .* randn(n_scans, n_vox)
+        Y = X_design * beta_true .+ 0.05 .* randn(n_scans, n_vox)
         beta_fit, residuals, XtXinv = fit_glm(X_design, Y)
         @test all(isapprox.(beta_fit[:, 1], beta_true; atol=0.05))
         @test size(residuals) == (n_scans, n_vox)

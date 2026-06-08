@@ -90,6 +90,8 @@ function build_design_matrix(
     oversampling = 16
     dt = tr / oversampling
     hrf_fine = canonical_hrf(dt)   # HRF sampled at fine resolution, not zero-order held
+    hrf_fine = hrf_fine ./ sum(hrf_fine)   # unit-area: a sustained stimulus → amplitude ≈ 1
+                                           # (a global scale on all condition columns; t-maps unchanged)
 
     n_cond = length(onsets)
     X = zeros(n_scans, n_cond + 1)
