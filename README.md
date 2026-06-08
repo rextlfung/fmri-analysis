@@ -50,14 +50,15 @@ using .FmriAnalysis
 - `plot_tmap_flat(t_map)` — Two-panel Plots.jl figure: per-voxel bar chart + t-score histogram.
 - `plot_design_matrix(X)` — Heatmap of the design matrix (sanity check).
 - `plot_tmap_slices(t_vol)` — Orthogonal axial/coronal/sagittal slice view (CairoMakie) with optional anatomical underlay.
+- `tmap_summary(t_map)` — Prints a console table of voxel counts surviving a range of |t| thresholds (with approximate p-values), plus summary statistics (mean, std, min/max, percentiles).
 
 ### 7. Experiment Parameters
 - `ExperimentParams` — Struct holding `tr`, `onsets`, `durations`, `contrast`, and `n_discard` (leading frames to drop before fitting).
 
 ### 8. Analysis Pipelines (`scripts/run_analysis.jl`)
 `analyze_and_plot` is a single function with two methods dispatched on input dimensionality:
-- `analyze_and_plot(X, params, title)` (4-D `X`) — Runs the full GLM pipeline on a single 4-D volume: derives a brain mask via `bet_brain_mask`, fits the GLM on brain voxels only, and displays orthogonal slice plots. Returns `(slice_idx, t_vol, Y_masked)`.
-- `analyze_and_plot(X, params, Nscales, patch_sizes, title)` (5-D `X`) — Runs the same pipeline on each scale of a 5-D MSLR reconstruction. The design matrix is built once and reused across all scales. Brain mask is derived from the temporal mean of the summed reconstruction. Returns `(slice_idx, t_vols, Y_vols, t_sum_vol, Y_sum_masked)`.
+- `analyze_and_plot(X, params, title; ref_slice_idx=nothing, brain_mask=nothing, design_matrix=nothing, tmp_dir="/tmp")` (4-D `X`) — Runs the full GLM pipeline on a single 4-D volume: derives a brain mask via `bet_brain_mask` (or reuses a passed-in one), fits the GLM on brain voxels only, prints a `tmap_summary`, and displays orthogonal slice plots thresholded at the 99th percentile of |t|. Returns `(slice_idx, t_vol, Y_masked)`.
+- `analyze_and_plot(X, params, Nscales, patch_sizes, title; ref_slice_idx=nothing, brain_mask=nothing, tmp_dir="/tmp", threshold_quantile=0.99, plot_summary=false, plot_sum=false)` (5-D `X`) — Runs the same pipeline on each scale of a 5-D MSLR reconstruction. The design matrix is built once and reused across all scales. Brain mask is derived from the temporal mean of the summed reconstruction (or reused if passed in). Returns `(slice_idx, t_vols, Y_vols, t_sum_vol, Y_sum_masked)`.
 
 ### 9. NIfTI Export (`src/export.jl`)
 - `export_niftis(Y_masked, t_vol, prefix, out_dir)` — Exports a post-discard magnitude timeseries and t-score volume as NIfTI files for a single 4-D reconstruction.
@@ -155,7 +156,7 @@ using MAT
 vars = matread("path/to/mslr.mat")
 X = vars["X"]
 analyze_and_plot(X, params, Int(vars["Nscales"]), vars["patch_sizes"],
-    "MSLR recon"; ref_slice_idx=ref_idx)
+    "MSLR recon"; ref_slice_idx=ref_idx, threshold_quantile=0.99)
 ```
 
 ### Running tests
@@ -173,5 +174,5 @@ include("test/runtests.jl")
 
 - Complex-valued input arrays are automatically converted to magnitude (`abs.()`) before fitting; a warning is printed when this occurs.
 - The analysis pipelines fit the GLM on brain voxels only. The brain mask is derived automatically via `bet_brain_mask` (FSL BET) and is not written to disk; for registration or surface analysis, use BET directly.
-- `fdr_correct` and `bonferroni_correct` are available for multiple-comparisons correction on any returned t-map. The display threshold in `analyze_and_plot` is percentile-based (top 1% of brain t-scores by default).
-- The 5-D method of `analyze_and_plot` builds the GLM design matrix once and reuses it across all scales, thresholding independently per scale. The t-score color scale and anatomical underlay are shared across scales to keep comparisons interpretable.
+- Display thresholds in `analyze_and_plot` are percentile-based (top `threshold_quantile`, default 0.99, of |t| among brain voxels) rather than statistically corrected — they control plot coloring/titles only. The `fdr_correct` and `bonferroni_correct` functions perform actual Benjamini-Hochberg / Bonferroni correction and are available for standalone use on any returned t-map.
+- The 5-D method of `analyze_and_plot` builds the GLM design matrix once and reuses it across all scales, then computes a percentile-based display threshold independently per scale. The t-score color scale and anatomical underlay are shared across scales to keep comparisons interpretable.
