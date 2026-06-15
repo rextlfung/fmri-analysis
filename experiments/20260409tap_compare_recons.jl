@@ -25,7 +25,7 @@ params = ExperimentParams(
 
 schemes = [
     ("pd_recon",       "PD sampling",                 "pd"),
-    ("caipi_ts_recon", "time-shifted CAIPI sampling", "caipi_ts"),
+    # ("caipi_ts_recon", "time-shifted CAIPI sampling", "caipi_ts"),
     ("caipi_recon",    "CAIPI sampling",              "caipi"),
 ]
 
@@ -41,25 +41,57 @@ schemes = [
 basic_base = "/StorageRAID/rexfung/20260409tap/recon/basic"
 mslr_base  = "/StorageRAID/rexfung/20260409tap/recon/mslr"
 
+# %% Global + 20^3 + 6^3, summed image
 recons = [
-    (:mslr,  mslr_base,  "G+L+L_5xlambda",             "MSLR (5xλ) sum"),
-    (:mslr,  mslr_base,  "G+L+L_4xlambda",             "MSLR (4xλ) sum"),
-    (:mslr,  mslr_base,  "G+L+L_3xlambda",             "MSLR (3xλ) sum"),
-    (:mslr,  mslr_base,  "G+L+L_2xlambda",             "MSLR (2xλ) sum"),
     (:basic, basic_base, "bart_l1_r0.0050_tv_r0.0050", "BART (L1+TV)"),
+    (:mslr,  mslr_base,  "G+L+L_1xlambda", "G+L+L (1xλ) sum"),
+    (:mslr,  mslr_base,  "G+L+L_2xlambda", "G+L+L (2xλ) sum"),
+    (:mslr,  mslr_base,  "G+L+L_4xlambda", "G+L+L (4xλ) sum"),
+    (:mslr,  mslr_base,  "G+L+L_8xlambda", "G+L+L (8xλ) sum"),
+    (:mslr,  mslr_base,  "G+L+L_16xlambda", "G+L+L (16xλ) sum"),
 ]
-
-# %% ── Run ────────────────────────────────────────────────────────────────────
 compare_recons(schemes, recons, params)
 
-# %%
+# %% Global + 20^3 + 6^3, 6^3 component
 recons = [
-    (:mslr,  mslr_base,  "G+L+L_5xlambda",             "MSLR (5xλ) [6,6,6]",   3),
-    (:mslr,  mslr_base,  "G+L+L_4xlambda",             "MSLR (4xλ) [6,6,6]",   3),
-    (:mslr,  mslr_base,  "G+L+L_3xlambda",             "MSLR (3xλ) [6,6,6]",   3),
-    (:mslr,  mslr_base,  "G+L+L_2xlambda",             "MSLR (2xλ) [6,6,6]",   3),
     (:basic, basic_base, "bart_l1_r0.0050_tv_r0.0050", "BART (L1+TV)"),
+    (:mslr,  mslr_base,  "G+L+L_1xlambda", "G+L+L (1xλ) [6,6,6]", 3),
+    (:mslr,  mslr_base,  "G+L+L_2xlambda", "G+L+L (2xλ) [6,6,6]", 3),
+    (:mslr,  mslr_base,  "G+L+L_4xlambda", "G+L+L (4xλ) [6,6,6]", 3),
+    (:mslr,  mslr_base,  "G+L+L_8xlambda", "G+L+L(8xλ) [6,6,6]", 3),
+    (:mslr,  mslr_base,  "G+L+L_16xlambda", "G+L+L (16xλ) [6,6,6]", 3),
 ]
+compare_recons(schemes, recons, params)
 
-# %% ── Run ────────────────────────────────────────────────────────────────────
+# %% Global + Local, summed image
+recons = [
+    (:basic, basic_base, "bart_l1_r0.0050_tv_r0.0050", "BART (L1+TV)"),
+    (:mslr,  mslr_base,  "G+L_1xlambda",  "G+L (1xλ) sum"),
+    (:mslr,  mslr_base,  "G+L_2xlambda",  "G+L (2xλ) sum"),
+    (:mslr,  mslr_base,  "G+L_4xlambda",  "G+L (4xλ) sum"),
+    (:mslr,  mslr_base,  "G+L_8xlambda",  "G+L (8xλ) sum"),
+    (:mslr,  mslr_base,  "G+L_16xlambda", "G+L (16xλ) sum"),
+]
+compare_recons(schemes, recons, params)
+
+# %% Global + Local, local component (scale 2)
+recons = [
+    (:basic, basic_base, "bart_l1_r0.0050_tv_r0.0050", "BART (L1+TV)"),
+    (:mslr,  mslr_base,  "G+L_1xlambda",  "G+L (1xλ) local",  2),
+    (:mslr,  mslr_base,  "G+L_2xlambda",  "G+L (2xλ) local",  2),
+    (:mslr,  mslr_base,  "G+L_4xlambda",  "G+L (4xλ) local",  2),
+    (:mslr,  mslr_base,  "G+L_8xlambda",  "G+L (8xλ) local",  2),
+    (:mslr,  mslr_base,  "G+L_16xlambda", "G+L (16xλ) local", 2),
+]
+compare_recons(schemes, recons, params)
+
+# %% Local only, summed image
+recons = [
+    (:basic, basic_base, "bart_l1_r0.0050_tv_r0.0050", "BART (L1+TV)"),
+    (:mslr,  mslr_base,  "L_1xlambda",  "LLR (1xλ)"),
+    (:mslr,  mslr_base,  "L_2xlambda",  "LLR (2xλ)"),
+    (:mslr,  mslr_base,  "L_4xlambda",  "LLR (4xλ)"),
+    (:mslr,  mslr_base,  "L_8xlambda",  "LLR (8xλ)"),
+    (:mslr,  mslr_base,  "L_16xlambda", "LLR (16xλ)"),
+]
 compare_recons(schemes, recons, params)
