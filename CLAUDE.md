@@ -37,19 +37,19 @@ There is no separate entry point — these four files together constitute the mo
 
 ### GLM pipeline
 
-The pipeline operates in this order: `build_design_matrix` → `fit_glm` → `compute_tscores`. The `run_glm` wrapper accepts an optional `design_matrix` keyword argument; pass a pre-built matrix when calling it repeatedly with the same parameters (e.g. across MSLR scales) to avoid redundant FFT convolutions.
+The pipeline operates in this order: `build_design_matrix` → `fit_glm` → `compute_tscores` → `t_to_z`. The `run_glm` wrapper accepts an optional `design_matrix` keyword argument; pass a pre-built matrix when calling it repeatedly with the same parameters (e.g. across MSLR scales) to avoid redundant FFT convolutions. `run_glm` returns `(t_map, beta, X, z_map, df)`.
 
 The GLM is fit on **brain voxels only**. The workflow is:
 1. Flatten 4-D volume to `(n_scans × n_voxels)` matrix
 2. Apply brain mask to select brain columns
 3. Fit GLM on the masked subset
-4. Reconstruct a full-size t-map by placing brain t-scores back into a zeros array
+4. Reconstruct full-size t-map and z-map by placing brain scores back into zeros arrays
 
 `analyze_and_plot` is a single function with two methods dispatched on input dimensionality (see `scripts/run_analysis.jl`):
-- The **4-D method** `analyze_and_plot(X::…,4}, params, title_base; …)` returns three values: `(slice_idx, t_vol, Y_masked)`.
-- The **5-D method** `analyze_and_plot(X::…,5}, params, Nscales, patch_sizes, title_base; …)` returns five values: `(slice_idx, t_vols, Y_vols, t_sum_vol, Y_sum_masked)`.
+- The **4-D method** `analyze_and_plot(X::…,4}, params, title_base; …)` returns four values: `(slice_idx, t_vol, Y_masked, z_vol)`.
+- The **5-D method** `analyze_and_plot(X::…,5}, params, Nscales, patch_sizes, title_base; …)` returns seven values: `(slice_idx, t_vols, Y_vols, t_sum_vol, Y_sum_masked, z_vols, z_sum_vol)`.
 
-Destructure exactly the number of values the relevant method returns — assigning to a single variable captures a tuple, which will fail when used as a `ref_slice_idx`.
+Destructure at least the number of values you need — extra trailing values are silently ignored by Julia. Assigning to a single variable captures a tuple, which will fail when used as a `ref_slice_idx`.
 
 ### Brain masking
 
@@ -68,7 +68,7 @@ Standard reconstructions are 4-D `(nx, ny, nz, nt)`. MSLR reconstructions are 5-
 
 ### compare_recons pipeline (`scripts/compare_recons.jl`)
 
-`compare_recons(schemes, recons, params; threshold_quantile=0.99f0)` loops over sampling schemes and produces one CairoMakie figure per scheme. Each figure has three rows (axial / coronal / sagittal) and one column per reconstruction. Slices are centred at the peak positive t-score voxel of the first recon and are shared across all columns.
+`compare_recons(schemes, recons, params; threshold_quantile=0.99f0, stat="t")` loops over sampling schemes and produces one CairoMakie figure per scheme. Each figure has three rows (axial / coronal / sagittal) and one column per reconstruction. Slices are centred at the peak positive t-score voxel of the first recon and are shared across all columns. Pass `stat="z"` to display z-score maps instead of t-score maps.
 
 `recons` is a vector of tuples with the following shapes:
 - `(:basic, base_dir, identifier, label)` — loads `base_dir/$(scheme_base)_$(identifier).mat`, key `"img"` (4-D)
@@ -77,7 +77,7 @@ Standard reconstructions are 4-D `(nx, ny, nz, nt)`. MSLR reconstructions are 5-
 
 The brain mask and GLM design matrix are computed once from the first recon and shared across all recons within a scheme.
 
-Column titles show `"<label>\n99th |t| = X.XX  max |t| = X.XX"`. The t-score colormap range is the global max |t| across all recons; the display threshold is the 99th-percentile |t| of the first recon's brain voxels.
+Column titles show `"<label>\n|<stat>| threshold = X.XX  max |<stat>| = X.XX"`. The colormap range is the global max across all recons; the display threshold is the 99th-percentile of the first recon's brain voxels. The visualization functions (`tmap_summary`, `plot_tmap_flat`, `plot_tmap_slices`) accept a `stat` keyword (default `"t-score"`) to customize labels for arbitrary statistical maps.
 
 ### Experiment scripts
 

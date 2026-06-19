@@ -40,17 +40,27 @@ function compare_recons(
     schemes,
     recons,
     params::ExperimentParams;
-    threshold_quantile::Real = 0.99f0)
+    threshold_quantile::Real = 0.99f0,
+    slice_indices::Union{Nothing, NamedTuple} = nothing,
+    save_dir::Union{Nothing, AbstractString} = nothing,
+    save_name::Union{Nothing, AbstractString} = nothing,
+    stat::String = "t")
+
+    CairoMakie.update_theme!(fonts = (; regular = "TeX Gyre Heros"))
 
     colormap_spec = cgrad([:cyan, :blue, :black, :red, :yellow],
                           [0.0, 0.45, 0.5, 0.55, 1.0])
 
-    for (scheme_base, scheme_label, _) in schemes
+    ref_si = slice_indices
+
+    for (scheme_base, scheme_label, scheme_prefix) in schemes
         n_recons  = length(recons)
         t_vols    = Vector{Array{Float32,3}}(undef, n_recons)
+        z_vols    = Vector{Array{Float64,3}}(undef, n_recons)
         underlays = Vector{Array{Float32,3}}(undef, n_recons)
         shared_mask = nothing
         shared_dm   = nothing
+        vol_size    = nothing
 
         # ── Load data and run GLM for each reconstruction ──────────────────────
         for (ci, recon) in enumerate(recons)
@@ -70,6 +80,7 @@ function compare_recons(
             Y = Float32.(eltype(X) <: Complex ? abs.(X) : X)
             Y = Y[:, :, :, (params.n_discard+1):end]
             (nx, ny, nz, nt) = size(Y)
+            isnothing(vol_size) && (vol_size = (nx, ny, nz))
 
             # Brain mask and design matrix are shared within a scheme
             if isnothing(shared_mask)
@@ -80,23 +91,34 @@ function compare_recons(
             mask_flat = vec(shared_mask)
 
             Y_brain = Matrix{Float32}(transpose(reshape(Y, :, nt)))[:, mask_flat]
-            t_brain, _, _ = run_glm(Y_brain, params.onsets, params.durations,
+            t_brain, _, _, z_brain, _ = run_glm(Y_brain, params.onsets, params.durations,
                                     params.contrast, nt, params.tr; design_matrix=shared_dm)
 
             t_flat = zeros(Float32, nx * ny * nz)
             t_flat[mask_flat] .= t_brain
-            t_vols[ci]    = reshape(t_flat, nx, ny, nz)
+            t_vols[ci] = reshape(t_flat, nx, ny, nz)
+
+            z_flat = zeros(Float64, nx * ny * nz)
+            z_flat[mask_flat] .= z_brain
+            z_vols[ci] = reshape(z_flat, nx, ny, nz)
+
             underlays[ci] = dropdims(mean(Y .* Float32.(shared_mask), dims=4), dims=4)
         end
 
         # ── Slice indices: peak positive t in the first recon ──────────────────
-        peak_cart = argmax(t_vols[1])
-        si = (x=peak_cart[1], y=peak_cart[2], z=peak_cart[3])
+        if isnothing(ref_si)
+            peak_cart = argmax(t_vols[1])
+            ref_si = (x=peak_cart[1], y=peak_cart[2], z=peak_cart[3])
+        end
+        si = ref_si
+
+        # ── Select stat volumes to display ────────────────────────────────────────
+        display_vols = stat == "z" ? z_vols : t_vols
 
         # ── Per-recon stats for annotation ────────────────────────────────────────
-        pct99_vals = [Float32(quantile(abs.(t[shared_mask]), Float64(threshold_quantile)))
-                      for t in t_vols]
-        max_t_vals = [Float32(maximum(abs.(t))) for t in t_vols]
+        pct99_vals = [Float32(quantile(abs.(vec(sv)[vec(shared_mask)]), Float64(threshold_quantile)))
+                      for sv in display_vols]
+        max_t_vals = [Float32(maximum(abs.(sv))) for sv in display_vols]
 
         # ── Shared colour scale across all recons ──────────────────────────────
         sym_range = maximum(max_t_vals)
@@ -105,43 +127,57 @@ function compare_recons(
         display_thr = max(pct99_vals[1], eps(Float32))
 
         # ── Build comparison figure ────────────────────────────────────────────
+        CELL_W  = 300
+        LABEL_W = 65
+        CB_W    = 65
+        HDR_H   = 75
+        (vx, vy, vz) = vol_size
+        h_ax  = round(Int, CELL_W * vy / vx)
+        h_cor = round(Int, CELL_W * vz / vx)
+        h_sag = round(Int, CELL_W * vz / vy)
         fig = CairoMakie.Figure(
-            size            = (320 * n_recons + 120, 980),
-            backgroundcolor = :black)
+            size            = (n_recons*CELL_W + LABEL_W + CB_W,
+                               HDR_H + h_ax + h_cor + h_sag),
+            figure_padding  = 0,
+            backgroundcolor = :black,
+        )
 
-        CairoMakie.Label(fig[0, 1:n_recons],
-            scheme_label;
-            fontsize  = 20,
-            color     = :white,
-            font      = :bold,
-            tellwidth = false)
-
-        for (col, recon) in enumerate(recons)
-            rlabel = recon[4]
-            hdr = @sprintf("%s\n99th |t| = %.2f  max |t| = %.2f",
-                           rlabel, pct99_vals[col], max_t_vals[col])
-            CairoMakie.Label(fig[1, col], hdr;
-                fontsize  = 13,
-                color     = :white,
-                tellwidth = false)
-        end
-
+        # Layout: row 0 = headers, rows 1-3 = images
+        #         col 1 = row labels, cols 2..n+1 = images, col n+2 = colorbar
         view_info = [
             ("Axial\n(z = $(si.z))",    3, si.z),
             ("Coronal\n(y = $(si.y))",  2, si.y),
             ("Sagittal\n(x = $(si.x))", 1, si.x),
         ]
 
-        local last_hm
-        for (row, (vname, dim, idx)) in enumerate(view_info)
-            CairoMakie.Label(fig[row + 1, 0], vname;
-                fontsize   = 12,
-                color      = :white,
-                rotation   = π / 2,
-                tellheight = false)
+        u_ranges = map(underlays) do ul
+            vals = vcat([vec(Matrix(selectdim(ul, d, i))) for (_, d, i) in view_info]...)
+            extrema(vals)
+        end
 
-            for (col, (t_vol, underlay)) in enumerate(zip(t_vols, underlays))
-                ax = CairoMakie.Axis(fig[row + 1, col];
+        for (c, recon) in enumerate(recons)
+            rlabel = recon[4]
+            hdr = @sprintf("%s\n|%s| threshold = %.2f\nmax |%s| = %.2f",
+                           rlabel, stat, pct99_vals[c], stat, max_t_vals[c])
+            CairoMakie.Label(fig[0, c + 1], hdr;
+                fontsize      = 19,
+                color         = :white,
+                halign        = :center,
+                valign        = :bottom,
+                justification = :center)
+        end
+
+        local last_hm
+        for (r, (vname, dim, idx)) in enumerate(view_info)
+            CairoMakie.Label(fig[r, 1], vname;
+                fontsize = 18,
+                color    = :white,
+                halign   = :right,
+                valign   = :center,
+                rotation = π / 2)
+
+            for (c, (stat_vol, underlay)) in enumerate(zip(display_vols, underlays))
+                ax = CairoMakie.Axis(fig[r, c + 1];
                     backgroundcolor    = :black,
                     aspect             = CairoMakie.DataAspect(),
                     yreversed          = false,
@@ -151,11 +187,11 @@ function compare_recons(
                     yticklabelsvisible = false)
 
                 sl_u    = Matrix(selectdim(underlay, dim, idx))
-                u_min, u_max = extrema(underlay)
+                u_min, u_max = u_ranges[c]
                 u_norm  = (sl_u .- u_min) ./ (u_max - u_min + eps(Float32))
                 CairoMakie.heatmap!(ax, u_norm; colormap = :grays, colorrange = (0, 1))
 
-                sl_t    = copy(Float32.(Matrix(selectdim(t_vol, dim, idx))))
+                sl_t    = copy(Float32.(Matrix(selectdim(stat_vol, dim, idx))))
                 hide    = (sl_t .> -display_thr) .& (sl_t .< display_thr)
                 sl_t[hide] .= NaN32
                 hm = CairoMakie.heatmap!(ax, sl_t;
@@ -163,17 +199,39 @@ function compare_recons(
                     colorrange = (-sym_range, sym_range),
                     nan_color  = (:black, 0.0))
 
-                row == length(view_info) && col == n_recons && (last_hm = hm)
+                r == length(view_info) && c == n_recons && (last_hm = hm)
             end
         end
 
-        CairoMakie.Colorbar(fig[2:4, n_recons + 1], last_hm;
-            label          = "t-score",
-            labelcolor     = :white,
+        CairoMakie.Label(fig[0, n_recons + 2], stat;
+            fontsize = 19,
+            color    = :white,
+            halign   = :center,
+            valign   = :bottom)
+        CairoMakie.Colorbar(fig[1:3, n_recons + 2], last_hm;
+            labelvisible   = false,
             tickcolor      = :white,
             ticklabelcolor = :white,
             width          = 16)
 
+        CairoMakie.colsize!(fig.layout, 1, CairoMakie.Fixed(LABEL_W))
+        for c in 1:n_recons
+            CairoMakie.colsize!(fig.layout, c + 1, CairoMakie.Fixed(CELL_W))
+        end
+        CairoMakie.colsize!(fig.layout, n_recons + 2, CairoMakie.Fixed(CB_W))
+        CairoMakie.rowsize!(fig.layout, 0, CairoMakie.Fixed(HDR_H))
+        CairoMakie.rowsize!(fig.layout, 1, CairoMakie.Fixed(h_ax))
+        CairoMakie.rowsize!(fig.layout, 2, CairoMakie.Fixed(h_cor))
+        CairoMakie.rowsize!(fig.layout, 3, CairoMakie.Fixed(h_sag))
+        CairoMakie.colgap!(fig.layout, 0)
+        CairoMakie.rowgap!(fig.layout, 0)
+
         display(fig)
+        if !isnothing(save_dir) && !isnothing(save_name)
+            mkpath(save_dir)
+            CairoMakie.save(joinpath(save_dir, "$(scheme_prefix)_$(save_name).png"), fig)
+        end
     end
+
+    return ref_si
 end

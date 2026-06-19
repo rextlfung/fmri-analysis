@@ -52,6 +52,43 @@ using .FmriAnalysis
         @test t[1] > 10.0   # strong planted effect → high t-score
     end
 
+    @testset "t_to_z transform" begin
+        Random.seed!(7)
+        df = 148
+        t_vals = [0.0, 1.96, -1.96, 3.0, -5.0, 10.0, 50.0]
+        z_vals = t_to_z(t_vals, df)
+
+        # Sign preservation
+        @test all(sign.(z_vals) .== sign.(t_vals))
+
+        # Zero preservation
+        @test z_vals[1] == 0.0
+
+        # p-value equivalence (the defining property)
+        p_from_t = t_to_p(t_vals, df)
+        p_from_z = z_to_p(z_vals)
+        @test p_from_t ≈ p_from_z atol=1e-12
+
+        # For finite df, |z| < |t| at moderate positive t (t has heavier tails)
+        @test abs(z_vals[4]) < abs(t_vals[4])  # t=3.0
+
+        # Numerical stability: no Inf or NaN at extreme |t|
+        @test all(isfinite, z_vals)
+        @test !any(isnan, z_vals)
+    end
+
+    @testset "z_to_p" begin
+        z = [0.0, 1.96, -1.96, 3.0]
+        p = z_to_p(z)
+        @test p[1] ≈ 1.0 atol=0.01
+        @test isapprox(p[2], p[3]; atol=1e-10)  # symmetric
+        @test p[4] < p[2]                        # higher z → lower p
+        # Matches t_to_p for high df
+        df = 10000
+        t = [1.96, 3.0]
+        @test z_to_p(t_to_z(t, df)) ≈ t_to_p(t, df) atol=1e-8
+    end
+
     @testset "FDR under pure null" begin
         # BH FDR applied to i.i.d. t-scores from the null distribution.
         # The number of false rejections should be very small.
@@ -80,15 +117,24 @@ using .FmriAnalysis
         contrast  = [1.0, -1.0, 0.0]
         tr = 0.8
         Y = randn(n_scans, 20)
-        t_map, beta, X = run_glm(Y, onsets, durations, contrast, n_scans, tr)
+        t_map, beta, X, z_map, df = run_glm(Y, onsets, durations, contrast, n_scans, tr)
         @test length(t_map) == 20
+        @test length(z_map) == 20
+        @test df == n_scans - 3   # 2 conditions + intercept
         @test size(X, 1) == n_scans
         @test size(X, 2) == 3   # 2 conditions + intercept
 
         # Passing a pre-built design matrix should give identical results
-        t_map2, _, _ = run_glm(Y, onsets, durations, contrast, n_scans, tr;
+        t_map2, _, _, z_map2, df2 = run_glm(Y, onsets, durations, contrast, n_scans, tr;
                                 design_matrix=X)
         @test t_map ≈ t_map2
+        @test z_map ≈ z_map2
+        @test df == df2
+
+        # p-value equivalence between t and z
+        p_t = t_to_p(t_map, df)
+        p_z = z_to_p(z_map)
+        @test p_t ≈ p_z atol=1e-10
     end
 
     @testset "t_to_p symmetry" begin

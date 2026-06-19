@@ -7,7 +7,7 @@ Sections
 ────────
   1.  Haemodynamic Response Function
   2.  Design Matrix
-  3.  GLM Fitting & Contrast t-scores
+  3.  GLM Fitting, Contrast t-scores & z-scores
   4.  FDR / Bonferroni Correction
   5.  Brain Mask Extraction
   6.  Visualization
@@ -32,7 +32,7 @@ using Distributions
 using SpecialFunctions: gamma
 
 export canonical_hrf, build_design_matrix, fit_glm, compute_tscores, run_glm,
-       t_to_p, fdr_correct, bonferroni_correct, bet_brain_mask,
+       t_to_z, t_to_p, z_to_p, fdr_correct, bonferroni_correct, bet_brain_mask,
        ExperimentParams, plot_design_matrix, tmap_summary, plot_tmap_flat,
        plot_tmap_slices, analyze_and_plot, export_niftis, compare_recons
 
@@ -174,9 +174,35 @@ end
 
 
 """
+    t_to_z(t, df)
+
+Convert t-scores to z-scores via the probability integral transform (FSL-style):
+
+    z = sign(t) · Φ⁻¹(F_t(|t|; df))
+
+Uses log-space computation (`logccdf` / `invlogccdf`) for numerical stability
+at extreme t-values. Zero-valued inputs are preserved as zeros.
+"""
+function t_to_z(t::AbstractVector{<:Real}, df::Int)
+    tdist = TDist(df)
+    ndist = Normal()
+    z = similar(t, Float64)
+    for i in eachindex(t)
+        if iszero(t[i])
+            z[i] = 0.0
+        else
+            log_tail = logccdf(tdist, abs(t[i]))
+            z[i] = sign(t[i]) * invlogccdf(ndist, log_tail)
+        end
+    end
+    return z
+end
+
+
+"""
     run_glm(Y, onsets, durations, contrast, n_scans, tr; design_matrix=nothing)
 
-Full pipeline: design matrix → GLM fit → t-scores.
+Full pipeline: design matrix → GLM fit → t-scores → z-scores.
 
 # Arguments
 - `Y`             : (n_scans × n_voxels) BOLD data matrix
@@ -189,7 +215,7 @@ Full pipeline: design matrix → GLM fit → t-scores.
                     when `nothing` (default). Pass a pre-built matrix to avoid
                     recomputing it across repeated calls with the same parameters.
 
-# Returns `t_map`, `beta`, `X`
+# Returns `t_map`, `beta`, `X`, `z_map`, `df`
 """
 function run_glm(
     Y::AbstractMatrix{<:Real},
@@ -208,8 +234,10 @@ function run_glm(
 
     beta, residuals, XtXinv = fit_glm(X, Y)
     t_map = compute_tscores(beta, residuals, XtXinv, contrast)
+    df = size(Y, 1) - size(X, 2)
+    z_map = t_to_z(t_map, df)
 
-    return t_map, beta, X
+    return t_map, beta, X, z_map, df
 end
 
 
@@ -228,6 +256,17 @@ Convert a vector of t-scores to p-values using `Distributions.TDist`.
 function t_to_p(t::AbstractVector{<:Real}, df::Int; two_tailed::Bool=true)
     dist = TDist(df)
     p = ccdf.(dist, abs.(t))
+    two_tailed && (p .*= 2)
+    return clamp.(p, 0.0, 1.0)
+end
+
+"""
+    z_to_p(z; two_tailed=true)
+
+Convert z-scores to p-values using the standard normal distribution.
+"""
+function z_to_p(z::AbstractVector{<:Real}; two_tailed::Bool=true)
+    p = ccdf.(Normal(), abs.(z))
     two_tailed && (p .*= 2)
     return clamp.(p, 0.0, 1.0)
 end
@@ -390,80 +429,84 @@ function plot_design_matrix(X::AbstractMatrix{<:Real};
 end
 
 """
-    tmap_summary(t_map; thresholds=[1.65, 1.96, 2.58, 3.29, 4.42, 5.0], title=nothing)
+    tmap_summary(stat_map; thresholds=..., title=nothing, stat="t-score")
 
-Print a table of how many voxels survive common t-thresholds, with
+Print a table of how many voxels survive common thresholds, with
 approximate two-tailed p-values and percentage of total voxels.
 
 Default thresholds correspond roughly to:
   p<.10, p<.05, p<.02, p<.01, p<.002, p<.001, p<.00001, p<.000001 (uncorrected)
 """
-function tmap_summary(t_map::AbstractArray{<:Real};
+function tmap_summary(stat_map::AbstractArray{<:Real};
     thresholds::Vector{Float64}=[1.65, 1.96, 2.33, 2.58, 3.09, 3.29, 4.42, 5.0],
-    title::Union{String,Nothing}=nothing)
+    title::Union{String,Nothing}=nothing,
+    stat::String="t-score")
 
-    total = length(t_map)
-    header = isnothing(title) ? "── t-map summary" : "── t-map summary: $title"
+    s = first(stat)
+    total = length(stat_map)
+    header = isnothing(title) ? "── $stat map summary" : "── $stat map summary: $title"
     println("\n$header")
-    @printf("   Total voxels : %d\n", total)
-    @printf("   Mean t       : %+.3f\n", mean(t_map))
-    @printf("   Std  t       : %.3f\n", std(t_map))
-    @printf("   Min / Max    : %.3f  /  %.3f\n", minimum(t_map), maximum(t_map))
-    @printf("   Median |t|   : %.3f\n", median(abs.(t_map)))
-    @printf("   99th pct |t| : %.3f\n", quantile(abs.(t_map), 0.99))
+    @printf("   Total voxels  : %d\n", total)
+    @printf("   Mean %-2s       : %+.3f\n", s, mean(stat_map))
+    @printf("   Std  %-2s       : %.3f\n", s, std(stat_map))
+    @printf("   Min / Max     : %.3f  /  %.3f\n", minimum(stat_map), maximum(stat_map))
+    @printf("   Median |%-2s|   : %.3f\n", s, median(abs.(stat_map)))
+    @printf("   99th pct |%-2s| : %.3f\n", s, quantile(abs.(stat_map), 0.99))
     println("   ┌───────────┬────────────┬────────┬────────┬─────────┬────────┐")
     println("   │ threshold │  approx p  │  pos   │  neg   │  total  │   %    │")
     println("   ├───────────┼────────────┼────────┼────────┼─────────┼────────┤")
     approx_p = [0.10, 0.05, 0.02, 0.01, 0.002, 0.001, 0.00001, 0.000001]
     for (thr, p) in zip(thresholds, approx_p)
-        pos = count(t_map .> thr)
-        neg = count(t_map .< -thr)
+        pos = count(stat_map .> thr)
+        neg = count(stat_map .< -thr)
         both = pos + neg
         pct = 100.0 * both / total
-        @printf("   │   |t|>%-4.2f│  p<%-6.0e  │ %6d │ %6d │ %7d │ %5.1f%% │\n",
-            thr, p, pos, neg, both, pct)
+        @printf("   │   |%s|>%-4.2f│  p<%-6.0e  │ %6d │ %6d │ %7d │ %5.1f%% │\n",
+            s, thr, p, pos, neg, both, pct)
     end
     println("   └───────────┴────────────┴────────┴────────┴─────────┴────────┘")
 end
 
 """
-    plot_tmap_flat(t_map; threshold=2.0, title="t-score map")
+    plot_tmap_flat(stat_map; threshold=2.0, title=nothing, stat="t-score")
 
-Two-panel Plots.jl figure for a 1-D t-map vector:
+Two-panel Plots.jl figure for a 1-D stat-map vector:
   - Left  : bar chart colored by sign / threshold
   - Right : histogram with threshold lines
 """
-function plot_tmap_flat(t_map::AbstractVector{<:Real};
+function plot_tmap_flat(stat_map::AbstractVector{<:Real};
     threshold=nothing,
-    title::String="t-score map")
+    title::Union{String,Nothing}=nothing,
+    stat::String="t-score")
 
     threshold = isnothing(threshold) ? 1.96 : Float64(threshold)
+    title = isnothing(title) ? "$stat map" : title
 
-    n = length(t_map)
-    colors = [t >= threshold ? :crimson :
-              t <= -threshold ? :dodgerblue : :lightgray
-              for t in t_map]
+    n = length(stat_map)
+    colors = [v >= threshold ? :crimson :
+              v <= -threshold ? :dodgerblue : :lightgray
+              for v in stat_map]
 
-    p1 = Plots.bar(1:n, t_map;
+    p1 = Plots.bar(1:n, stat_map;
         color=colors,
         legend=false,
         xlabel="Voxel index",
-        ylabel="t-score",
-        title="per-voxel t-scores",
+        ylabel=stat,
+        title="per-voxel $stat",
         linecolor=:match,
-        ylims=(minimum(t_map) * 1.1, maximum(t_map) * 1.1))
+        ylims=(minimum(stat_map) * 1.1, maximum(stat_map) * 1.1))
 
     Plots.hline!(p1, [threshold, -threshold];
         linestyle=:dash, color=:black, linewidth=1.5, label="")
 
-    p2 = Plots.histogram(t_map;
+    p2 = Plots.histogram(stat_map;
         bins=40,
         color=:steelblue,
         alpha=0.7,
         legend=false,
-        xlabel="t-score",
+        xlabel=stat,
         ylabel="Voxel count",
-        title="t-score distribution")
+        title="$stat distribution")
 
     Plots.vline!(p2, [threshold, -threshold];
         linestyle=:dash, color=:black, linewidth=1.5, label="")
@@ -476,42 +519,45 @@ function plot_tmap_flat(t_map::AbstractVector{<:Real};
 end
 
 """
-    plot_tmap_slices(t_vol; threshold=[-1.96, 1.96], clim=nothing,
+    plot_tmap_slices(stat_vol; threshold=[-1.96, 1.96], clim=nothing,
                      underlay=nothing, underlay_range=nothing,
-                     title="t-map slices", slice_indices=nothing)
+                     title="stat-map slices", slice_indices=nothing,
+                     stat="t-score")
 
-Orthogonal (axial / coronal / sagittal) slice view of a 3-D t-map using
+Orthogonal (axial / coronal / sagittal) slice view of a 3-D stat map using
 CairoMakie. Sub-threshold voxels are transparent.
 
 - `underlay`       : optional same-size anatomical volume shown in grayscale
 - `underlay_range` : `(u_min, u_max)` for consistent anatomical scaling across
                      multiple calls; computed per-slice when omitted
-- `slice_indices`  : NamedTuple `(x=i, y=j, z=k)`; defaults to peak |t| voxel
+- `slice_indices`  : NamedTuple `(x=i, y=j, z=k)`; defaults to peak voxel
+- `stat`     : label for colorbar and title (default `"t-score"`)
 
 Returns a `CairoMakie.Figure` — call `display(fig)` or `save("out.png", fig)`.
 """
-function plot_tmap_slices(t_vol::AbstractArray{<:Real,3};
+function plot_tmap_slices(stat_vol::AbstractArray{<:Real,3};
     threshold=nothing,
     clim=nothing,
     underlay=nothing,
     underlay_range=nothing,
-    title::String="t-map slices",
-    slice_indices=nothing)
+    title::String="stat-map slices",
+    slice_indices=nothing,
+    stat::String="t-score")
 
-    t_vals = filter(x -> !isnan(x) && !iszero(x), vec(t_vol))
-    max_t = isempty(t_vals) ? NaN : maximum(t_vals)
+    s = first(stat)
+    vals = filter(x -> !isnan(x) && !iszero(x), vec(stat_vol))
+    max_val = isempty(vals) ? NaN : maximum(vals)
 
     threshold = isnothing(threshold) ? [-1.96f0, 1.96f0] : Float32.(threshold)
     clim = if isnothing(clim)
-        isempty(t_vals) ? (-1.0f0, 1.0f0) : (minimum(t_vals), maximum(t_vals))
+        isempty(vals) ? (-1.0f0, 1.0f0) : (minimum(vals), maximum(vals))
     else
         Float32.(clim)
     end
 
-    sx, sy, sz = size(t_vol)
+    sx, sy, sz = size(stat_vol)
 
-    # Auto-detect top-2 peaks by absolute t-score in the current volume
-    abs_vol = abs.(t_vol)
+    abs_vol = abs.(stat_vol)
     abs_vol_inf = replace(abs_vol, NaN => -Inf)
     all_nan = all(isnan, abs_vol)
 
@@ -522,20 +568,18 @@ function plot_tmap_slices(t_vol::AbstractArray{<:Real,3};
     peak2_cart = any(x -> x > -Inf, abs_vol_inf2) ?
         argmax(abs_vol_inf2) : CartesianIndex(sx ÷ 2, sy ÷ 2, sz ÷ 2 + 1)
 
-    # Row 1: use provided slice_indices (ref alignment) or the detected peak
     si1 = isnothing(slice_indices) ?
         (x=peak1_cart[1], y=peak1_cart[2], z=peak1_cart[3]) : slice_indices
-    # Row 2: always the literal 2nd-highest |t| voxel
     si2 = (x=peak2_cart[1], y=peak2_cart[2], z=peak2_cart[3])
 
-    masked = Float32.(t_vol)
+    masked = Float32.(stat_vol)
     masked[masked.>threshold[1].&&masked.<threshold[2]] .= NaN32
 
     function get_slices(si)
         function inner(dim, idx)
-            sl_t = Matrix(selectdim(masked, dim, idx))
+            sl_s = Matrix(selectdim(masked, dim, idx))
             sl_u = isnothing(underlay) ? nothing : Matrix(selectdim(underlay, dim, idx))
-            return sl_t, sl_u
+            return sl_s, sl_u
         end
         return [
             ("Axial (z=$(si.z))",     inner(3, si.z)...),
@@ -546,14 +590,14 @@ function plot_tmap_slices(t_vol::AbstractArray{<:Real,3};
 
     fig = CairoMakie.Figure(size=(1600, 1200), backgroundcolor=:black)
     CairoMakie.Label(fig[0, 1:3],
-        "$title, max t = $(round(max_t, digits=2))";
+        "$title, max $s = $(round(max_val, digits=2))";
         fontsize=18, color=:white, font=:bold)
 
     sym_range = maximum(abs.(collect(clim)))
 
     local colorbar_hm
     for (row, slices) in enumerate([get_slices(si1), get_slices(si2)])
-        for (col, (slab, sl_t, sl_u)) in enumerate(slices)
+        for (col, (slab, sl_s, sl_u)) in enumerate(slices)
             ax = CairoMakie.Axis(fig[row, col];
                 title=slab,
                 titlecolor=:white,
@@ -575,8 +619,7 @@ function plot_tmap_slices(t_vol::AbstractArray{<:Real,3};
                 CairoMakie.heatmap!(ax, u_norm; colormap=:grays, colorrange=(0, 1))
             end
 
-            hm = CairoMakie.heatmap!(ax, sl_t;
-                # Custom diverging colormap: Cyan -> Blue -> Black -> Red -> Yellow
+            hm = CairoMakie.heatmap!(ax, sl_s;
                 colormap=cgrad([:cyan, :blue, :black, :red, :yellow],
                                [0.0, 0.45, 0.5, 0.55, 1.0]),
                 colorrange=(-sym_range, sym_range),
@@ -587,7 +630,7 @@ function plot_tmap_slices(t_vol::AbstractArray{<:Real,3};
     end
 
     CairoMakie.Colorbar(fig[1:2, 4], colorbar_hm;
-        label="t-score",
+        label=stat,
         labelcolor=:white,
         tickcolor=:white,
         ticklabelcolor=:white,
