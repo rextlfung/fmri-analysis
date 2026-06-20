@@ -28,12 +28,13 @@ using .FmriAnalysis
 
 ### Module layout
 
-`src/fmri_analysis.jl` defines the `FmriAnalysis` module and, at the end of the file, `include`s three files:
+`src/fmri_analysis.jl` defines the `FmriAnalysis` module and, at the end of the file, `include`s four files:
 - `../scripts/run_analysis.jl` — high-level `analyze_and_plot` pipelines
-- `../scripts/compare_recons.jl` — `compare_recons` multi-reconstruction comparison driver
+- `../scripts/compare_recons.jl` — `compare_recons` multi-reconstruction spatial comparison driver
+- `../scripts/compare_recons_time_series.jl` — `compare_recons_time_series` time-series comparison driver
 - `src/export.jl` — NIfTI export helpers
 
-There is no separate entry point — these four files together constitute the module. All included files rely on their dependencies (`Statistics`, `MAT`, `NIfTI`, `Printf`, `CairoMakie`, and the section 1–7 functions) being imported/defined by the parent module and must not add their own `using` statements. Note the unusual direction: a module under `src/` reaches up into `../scripts/` for the pipeline files.
+There is no separate entry point — these five files together constitute the module. All included files rely on their dependencies (`Statistics`, `MAT`, `NIfTI`, `Printf`, `CairoMakie`, and the section 1–7 functions) being imported/defined by the parent module and must not add their own `using` statements. Note the unusual direction: a module under `src/` reaches up into `../scripts/` for the pipeline files.
 
 ### GLM pipeline
 
@@ -79,8 +80,19 @@ The brain mask and GLM design matrix are computed once from the first recon and 
 
 Column titles show `"<label>\n|<stat>| threshold = X.XX  max |<stat>| = X.XX"`. The colormap range is the global max across all recons; the display threshold is the 99th-percentile of the first recon's brain voxels. The visualization functions (`tmap_summary`, `plot_tmap_flat`, `plot_tmap_slices`) accept a `stat` keyword (default `"t-score"`) to customize labels for arbitrary statistical maps.
 
+### compare_recons_time_series pipeline (`scripts/compare_recons_time_series.jl`)
+
+`compare_recons_time_series(schemes, recons, params; ...)` is a companion to `compare_recons` that produces time-series plots instead of spatial maps. It accepts the same `schemes`, `recons`, and `params` arguments. For each scheme it produces two figures:
+
+1. **Peak voxel** — BOLD time series at the highest-positive-stat voxel, one line per reconstruction, with the fitted GLM model overlaid (dashed). Legend shows the peak stat value and R².
+2. **Top-n% average** — mean BOLD time series across the top `top_percent`% active voxels (positive stat scores), with ±1 SEM shading. Legend shows voxel count and tSNR.
+
+Key keyword arguments: `normalize` (`"demean"` / `"zscore"` / `"psc"` / `"none"`), `peak_source` (`:first` or `:per_recon`), `stat` (`"t"` or `"z"`), `top_percent` (default `1.0`), `condition_names`, `brain_mask`, `design_matrix`. Task blocks are shaded per-condition with distinct colors. A summary table is printed to the console.
+
 ### Experiment scripts
 
 Files in `experiments/` are named by session date (e.g. `20260409tap.jl`) and are structured for cell-by-cell execution in VS Code with the Julia extension (`# %%` cell markers). They are not importable modules. Each script sets `params` (an `ExperimentParams`) near the top; the first reconstruction analyzed in a session establishes a `ref_slice_idx` that is passed to all subsequent calls to keep plots at the same anatomical location.
 
 `<session>_compare_recons.jl` companion scripts (e.g. `20260409tap_compare_recons.jl`) use `compare_recons` to produce side-by-side comparison figures. They define `schemes`, `recons`, and `params` then call `compare_recons(schemes, recons, params)`.
+
+`<session>_compare_recons_time_series.jl` companion scripts use `compare_recons_time_series` for time-series comparison. They share the same `schemes`/`recons`/`params` definitions.
