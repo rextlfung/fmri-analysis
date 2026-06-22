@@ -34,7 +34,7 @@ using .FmriAnalysis
 - `../scripts/compare_recons_time_series.jl` — `compare_recons_time_series` time-series comparison driver
 - `src/export.jl` — NIfTI export helpers
 
-There is no separate entry point — these five files together constitute the module. All included files rely on their dependencies (`Statistics`, `MAT`, `NIfTI`, `Printf`, `CairoMakie`, and the section 1–7 functions) being imported/defined by the parent module and must not add their own `using` statements. Note the unusual direction: a module under `src/` reaches up into `../scripts/` for the pipeline files.
+There is no separate entry point — these five files together constitute the module. All included files rely on their dependencies (`Statistics`, `LinearAlgebra`, `FFTW`, `MAT`, `NIfTI`, `Printf`, `Plots`, `CairoMakie`, `Distributions`, `SpecialFunctions`, and the section 1–7 functions) being imported/defined by the parent module and must not add their own `using` statements. Note the unusual direction: a module under `src/` reaches up into `../scripts/` for the pipeline files.
 
 ### GLM pipeline
 
@@ -69,7 +69,7 @@ Standard reconstructions are 4-D `(nx, ny, nz, nt)`. MSLR reconstructions are 5-
 
 ### compare_recons pipeline (`scripts/compare_recons.jl`)
 
-`compare_recons(schemes, recons, params; threshold_quantile=0.99f0, stat="t")` loops over sampling schemes and produces one CairoMakie figure per scheme. Each figure has three rows (axial / coronal / sagittal) and one column per reconstruction. Slices are centred at the peak positive t-score voxel of the first recon and are shared across all columns. Pass `stat="z"` to display z-score maps instead of t-score maps.
+`compare_recons(schemes, recons, params; threshold_quantile=0.99f0, stat="t", slice_indices=nothing, save_dir=nothing, save_name=nothing)` loops over sampling schemes and produces one CairoMakie figure per scheme. Each figure has three rows (axial / coronal / sagittal) and one column per reconstruction. Slices are centred at the peak positive t-score voxel of the first recon (or at `slice_indices` if provided) and are shared across all columns. Pass `stat="z"` to display z-score maps instead of t-score maps. When `save_dir` and `save_name` are both provided, each figure is also saved as a PNG. Returns the slice indices NamedTuple used.
 
 `recons` is a vector of tuples with the following shapes:
 - `(:basic, base_dir, identifier, label)` — loads `base_dir/$(scheme_base)_$(identifier).mat`, key `"img"` (4-D)
@@ -78,16 +78,22 @@ Standard reconstructions are 4-D `(nx, ny, nz, nt)`. MSLR reconstructions are 5-
 
 The brain mask and GLM design matrix are computed once from the first recon and shared across all recons within a scheme.
 
-Column titles show `"<label>\n|<stat>| threshold = X.XX  max |<stat>| = X.XX"`. The colormap range is the global max across all recons; the display threshold is the 99th-percentile of the first recon's brain voxels. The visualization functions (`tmap_summary`, `plot_tmap_flat`, `plot_tmap_slices`) accept a `stat` keyword (default `"t-score"`) to customize labels for arbitrary statistical maps.
+Column titles show `"<label>\n|<stat>| threshold = X.XX  max |<stat>| = X.XX"`. The colormap range is the global max across all recons; the display threshold is the `threshold_quantile`-percentile of the first recon's brain voxels. The visualization functions (`tmap_summary`, `plot_tmap_flat`, `plot_tmap_slices`) accept a `stat` keyword (default `"t-score"`) to customize labels for arbitrary statistical maps.
 
 ### compare_recons_time_series pipeline (`scripts/compare_recons_time_series.jl`)
 
-`compare_recons_time_series(schemes, recons, params; ...)` is a companion to `compare_recons` that produces time-series plots instead of spatial maps. It accepts the same `schemes`, `recons`, and `params` arguments. For each scheme it produces two figures:
+`compare_recons_time_series(schemes, recons, params; ...)` is a companion to `compare_recons` that produces time-series plots instead of spatial maps. It accepts the same `schemes`, `recons`, and `params` arguments. For each scheme it produces three figures by default (four with `show_residuals=true`):
 
-1. **Peak voxel** — BOLD time series at the highest-positive-stat voxel, one line per reconstruction, with the fitted GLM model overlaid (dashed). Legend shows the peak stat value and R².
-2. **Top-n% average** — mean BOLD time series across the top `top_percent`% active voxels (positive stat scores), with ±1 SEM shading. Legend shows voxel count and tSNR.
+1. **Peak voxel** — BOLD time series at the highest-positive-stat voxel, one line per reconstruction.
+2. **Top-n% average** — mean BOLD time series across the top `top_percent`% active voxels (positive stat scores).
+3. **Power spectrum** — frequency-domain comparison of the top-n% averaged signals, with the task fundamental frequency marked (enabled by default via `show_spectrum=true`).
+4. **Residuals** — residual (data minus model) time series for the top-n% average (disabled by default; enable with `show_residuals=true`).
 
-Key keyword arguments: `normalize` (`"demean"` / `"zscore"` / `"psc"` / `"none"`), `peak_source` (`:first` or `:per_recon`), `stat` (`"t"` or `"z"`), `top_percent` (default `1.0`), `condition_names`, `brain_mask`, `design_matrix`. Task blocks are shaded per-condition with distinct colors. A summary table is printed to the console.
+Task blocks are shaded per-condition with distinct colors. A summary table is printed to the console showing peak stat value, R², voxel count, and residual standard deviation per reconstruction.
+
+Note: the code computes fitted GLM model overlays, SEM bands, and per-recon stat annotations, but these are not currently wired into the plotting calls — the figures show only the raw time-series lines and task-block shading.
+
+Key keyword arguments: `normalize` (`"demean"` / `"zscore"` / `"psc"` / `"none"`), `peak_source` (`:first` or `:per_recon`), `stat` (`"t"` or `"z"`), `top_percent` (default `1.0`), `condition_names`, `brain_mask`, `design_matrix`, `show_model` (accepted but unused), `show_task_shading`, `show_spectrum`, `show_residuals`, `time_range`, `save_dir`, `save_name`. Returns a named tuple `(peak_voxel_idx, top_voxel_indices)` with the brain-voxel indices used.
 
 ### Experiment scripts
 
