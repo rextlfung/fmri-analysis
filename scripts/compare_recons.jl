@@ -48,9 +48,6 @@ function compare_recons(
 
     CairoMakie.update_theme!(fonts = (; regular = "TeX Gyre Heros"))
 
-    colormap_spec = cgrad([:cyan, :blue, :black, :red, :yellow],
-                          [0.0, 0.45, 0.5, 0.55, 1.0])
-
     ref_si = slice_indices
 
     for (scheme_base, scheme_label, scheme_prefix) in schemes
@@ -64,45 +61,20 @@ function compare_recons(
 
         # ── Load data and run GLM for each reconstruction ──────────────────────
         for (ci, recon) in enumerate(recons)
-            rtype, base, id = recon[1], recon[2], recon[3]
-            if rtype == :basic
-                X = matread(joinpath(base, "$(scheme_base)_$(id).mat"))["img"]
-            elseif rtype == :mslr
-                vars    = matread(joinpath(base, id, "$(scheme_base).mat"))
-                scale_n = length(recon) >= 5 ? recon[5] : nothing
-                X = isnothing(scale_n) ?
-                    dropdims(sum(vars["X"], dims=5), dims=5) :
-                    vars["X"][:, :, :, :, scale_n]
-            else
-                error("Unknown recon type :$rtype — expected :basic or :mslr")
-            end
-
-            Y = Float32.(eltype(X) <: Complex ? abs.(X) : X)
-            Y = Y[:, :, :, (params.n_discard+1):end]
+            Y = _load_recon(recon, scheme_base, params.n_discard)
             (nx, ny, nz, nt) = size(Y)
             isnothing(vol_size) && (vol_size = (nx, ny, nz))
 
-            # Brain mask and design matrix are shared within a scheme
             if isnothing(shared_mask)
-                mean_vol    = dropdims(mean(Y, dims=4), dims=4)
-                shared_mask = bet_brain_mask(mean_vol)
+                shared_mask = bet_brain_mask(dropdims(mean(Y, dims=4), dims=4))
                 shared_dm   = build_design_matrix(params.onsets, params.durations, nt, params.tr)
             end
             mask_flat = vec(shared_mask)
 
-            Y_brain = Matrix{Float32}(transpose(reshape(Y, :, nt)))[:, mask_flat]
-            t_brain, _, _, z_brain, _ = run_glm(Y_brain, params.onsets, params.durations,
-                                    params.contrast, nt, params.tr; design_matrix=shared_dm)
-
-            t_flat = zeros(Float32, nx * ny * nz)
-            t_flat[mask_flat] .= t_brain
-            t_vols[ci] = reshape(t_flat, nx, ny, nz)
-
-            z_flat = zeros(Float64, nx * ny * nz)
-            z_flat[mask_flat] .= z_brain
-            z_vols[ci] = reshape(z_flat, nx, ny, nz)
-
-            underlays[ci] = dropdims(mean(Y .* Float32.(shared_mask), dims=4), dims=4)
+            glm = _brain_glm(Y, mask_flat, params; design_matrix=shared_dm)
+            t_vols[ci] = _unflatten_to_volume(glm.t_brain, mask_flat, (nx, ny, nz))
+            z_vols[ci] = _unflatten_to_volume(glm.z_brain, mask_flat, (nx, ny, nz); T=Float64)
+            underlays[ci] = dropdims(mean(Y, dims=4), dims=4) .* shared_mask
         end
 
         # ── Slice indices: peak positive t in the first recon ──────────────────
@@ -195,7 +167,7 @@ function compare_recons(
                 hide    = (sl_t .> -display_thr) .& (sl_t .< display_thr)
                 sl_t[hide] .= NaN32
                 hm = CairoMakie.heatmap!(ax, sl_t;
-                    colormap   = colormap_spec,
+                    colormap   = STAT_COLORMAP,
                     colorrange = (-sym_range, sym_range),
                     nan_color  = (:black, 0.0))
 
@@ -227,10 +199,9 @@ function compare_recons(
         CairoMakie.rowgap!(fig.layout, 0)
 
         display(fig)
-        if !isnothing(save_dir) && !isnothing(save_name)
-            mkpath(save_dir)
-            CairoMakie.save(joinpath(save_dir, "$(scheme_prefix)_$(save_name).png"), fig)
-        end
+        _maybe_save_figure(fig, save_dir,
+            isnothing(save_name) ? nothing : "$(scheme_prefix)_$(save_name).png";
+            px_per_unit=1)
     end
 
     return ref_si

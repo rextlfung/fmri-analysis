@@ -24,49 +24,37 @@ function analyze_and_plot(X::AbstractArray{<:Number,4}, params::ExperimentParams
     title_base::String; ref_slice_idx=nothing,
     brain_mask=nothing, design_matrix=nothing, tmp_dir::String="/tmp")
 
-    # Discard instructional frames
-    Y = X[:, :, :, (params.n_discard+1):end]
-    (nx, ny, nz, nt) = size(Y)
-
-    # Auto-convert complex input to magnitude
-    if eltype(Y) <: Complex
+    # Discard instructional frames and convert to Float32
+    Y_raw = X[:, :, :, (params.n_discard+1):end]
+    if eltype(Y_raw) <: Complex
         @warn "analyze_and_plot: complex input detected for \"$title_base\" — " *
               "applying abs.() before GLM fitting."
-        Y = abs.(Y)
+        Y_raw = abs.(Y_raw)
     end
+    Y = Float32.(Y_raw)
+    (nx, ny, nz, nt) = size(Y)
 
     # ── Brain mask ──────────────────────────────────────────────────────────
     if isnothing(brain_mask)
-        mean_vol = dropdims(mean(Float32.(Y), dims=4), dims=4)
+        mean_vol = dropdims(mean(Y, dims=4), dims=4)
         brain_mask = bet_brain_mask(mean_vol; tmp_dir=tmp_dir)
     end
     brain_mask_flat = vec(brain_mask)
 
     # ── Mask the 4-D Timeseries ─────────────────────────────────────────────
-    Y_masked = Float32.(Y) .* brain_mask
+    Y_masked = Y .* brain_mask
 
     # GLM on brain voxels only
-    Y_mat = Matrix{Float32}(transpose(reshape(Float32.(Y), :, nt)))
-    Y_mat_brain = Y_mat[:, brain_mask_flat]
+    glm = _brain_glm(Y, brain_mask_flat, params; design_matrix=design_matrix)
 
-    t_map_brain, _, _, z_map_brain, _ = run_glm(Y_mat_brain, params.onsets, params.durations,
-        params.contrast, nt, params.tr; design_matrix=design_matrix)
-
-    # Reconstruct full t_map and z_map with zeros outside the brain
-    t_map = zeros(Float32, nx * ny * nz)
-    t_map[brain_mask_flat] .= t_map_brain
-    z_map = zeros(Float32, nx * ny * nz)
-    z_map[brain_mask_flat] .= z_map_brain
+    t_vol = _unflatten_to_volume(glm.t_brain, brain_mask_flat, (nx, ny, nz))
+    z_vol = _unflatten_to_volume(glm.z_brain, brain_mask_flat, (nx, ny, nz); T=Float64)
 
     # ── Display threshold: top 1% of brain t-scores ─────────────────────────
-    display_threshold = quantile(abs.(t_map_brain), 0.99)
-    display_threshold = max(display_threshold, eps(Float32))
+    display_threshold = max(quantile(abs.(glm.t_brain), 0.99), eps(Float32))
 
     # Visualize
-    tmap_summary(t_map_brain; title="$title_base")
-
-    t_vol = reshape(t_map, nx, ny, nz)
-    z_vol = reshape(z_map, nx, ny, nz)
+    tmap_summary(glm.t_brain; title="$title_base")
 
     underlay = dropdims(mean(Y_masked, dims=4), dims=4)
     underlay_range = (minimum(underlay), maximum(underlay))
@@ -150,28 +138,14 @@ function analyze_and_plot(
 
     for scale in 1:Nscales
         GC.gc()
-        Y_scale = X[:, :, :, (params.n_discard+1):end, scale]
+        Y_scale = Float32.(X[:, :, :, (params.n_discard+1):end, scale])
 
-        # Mask the 4-D Timeseries for this scale
-        Y_masked = Float32.(Y_scale) .* brain_mask
-        Y_vols[scale] = Y_masked
+        Y_vols[scale] = Y_scale .* brain_mask
 
-        Y_mat = Matrix{Float32}(transpose(reshape(Float32.(Y_scale), :, nt)))
-        Y_mat_brain = Y_mat[:, brain_mask_flat]
-
-        t_map_brain, _, _, z_map_brain, _ = run_glm(Y_mat_brain, params.onsets, params.durations,
-            params.contrast, nt, params.tr; design_matrix=design_matrix)
-
-        # Reconstruct full t_map and z_map with zeros outside the brain
-        t_map = zeros(Float32, nx * ny * nz)
-        t_map[brain_mask_flat] .= t_map_brain
-        t_maps[scale] = t_map
-
-        z_map = zeros(Float64, nx * ny * nz)
-        z_map[brain_mask_flat] .= z_map_brain
-        z_maps[scale] = z_map
-
-        underlays[scale] = dropdims(mean(Y_masked, dims=4), dims=4)
+        glm_s = _brain_glm(Y_scale, brain_mask_flat, params; design_matrix=design_matrix)
+        t_maps[scale] = vec(_unflatten_to_volume(glm_s.t_brain, brain_mask_flat, (nx, ny, nz)))
+        z_maps[scale] = vec(_unflatten_to_volume(glm_s.z_brain, brain_mask_flat, (nx, ny, nz); T=Float64))
+        underlays[scale] = dropdims(mean(Y_vols[scale], dims=4), dims=4)
     end
 
     # ── Sum reconstruction: slice index and/or same-scale plot ─────────────
@@ -184,16 +158,10 @@ function analyze_and_plot(
     if plot_sum || isnothing(ref_slice_idx)
         GC.gc()
         Y_sum = dropdims(sum(X[:, :, :, (params.n_discard+1):end, :], dims=5), dims=5)
-        Y_sum_mat_brain = Matrix{Float32}(transpose(reshape(Float32.(Y_sum), :, nt)))[:, brain_mask_flat]
-        t_sum_brain_vec, _, _, z_sum_brain_vec, _ = run_glm(Y_sum_mat_brain, params.onsets, params.durations,
-            params.contrast, nt, params.tr; design_matrix=design_matrix)
-        t_sum_flat = zeros(Float32, nx * ny * nz)
-        t_sum_flat[brain_mask_flat] .= t_sum_brain_vec
-        t_sum_vol_local = reshape(t_sum_flat, nx, ny, nz)
-
-        z_sum_flat = zeros(Float64, nx * ny * nz)
-        z_sum_flat[brain_mask_flat] .= z_sum_brain_vec
-        z_sum_vol_local = reshape(z_sum_flat, nx, ny, nz)
+        glm_sum = _brain_glm(Float32.(Y_sum), brain_mask_flat, params; design_matrix=design_matrix)
+        t_sum_vol_local = _unflatten_to_volume(glm_sum.t_brain, brain_mask_flat, (nx, ny, nz))
+        z_sum_vol_local = _unflatten_to_volume(glm_sum.z_brain, brain_mask_flat, (nx, ny, nz); T=Float64)
+        t_sum_brain_vec = glm_sum.t_brain
 
         if isnothing(ref_slice_idx)
             peak_idx = argmax(abs.(t_sum_vol_local))

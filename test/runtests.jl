@@ -146,4 +146,82 @@ using .FmriAnalysis
         @test p[4] < p[2]                    # higher t → lower p
     end
 
+    @testset "_brain_glm equivalence" begin
+        Random.seed!(123)
+        nx, ny, nz, nt_full = 4, 4, 3, 60
+        params = ExperimentParams(tr=0.8f0,
+            onsets=[collect(0.0f0:16.0f0:40.0f0)],
+            durations=[fill(8.0f0, 3)],
+            contrast=[1.0f0, 0.0f0],
+            n_discard=12)
+        X4d = rand(Float32, nx, ny, nz, nt_full)
+        mask = trues(nx, ny, nz); mask[1, 1, 1] = false
+        Y = X4d[:, :, :, 13:end]; nt = size(Y, 4)
+        mf = vec(mask)
+        dm = build_design_matrix(params.onsets, params.durations, nt, params.tr)
+
+        # Reference: inline pattern (pre-refactor)
+        Ymat = Matrix{Float32}(transpose(reshape(Float32.(Y), :, nt)))[:, mf]
+        tb_ref, _, _, zb_ref, _ = run_glm(Ymat, params.onsets, params.durations,
+            params.contrast, nt, params.tr; design_matrix=dm)
+
+        # New helper
+        glm = FmriAnalysis._brain_glm(Y, mf, params; design_matrix=dm)
+        @test glm.t_brain ≈ tb_ref
+        @test glm.z_brain ≈ zb_ref
+        @test glm.Y_brain ≈ Ymat
+    end
+
+    @testset "_unflatten_to_volume" begin
+        mask = BitVector([true, false, true, true, false, true])
+        scores = [10.0f0, 20.0f0, 30.0f0, 40.0f0]
+        vol = FmriAnalysis._unflatten_to_volume(scores, mask, (2, 3, 1))
+        @test size(vol) == (2, 3, 1)
+        @test vec(vol)[mask] == scores
+        @test all(vec(vol)[.!mask] .== 0)
+
+        vol64 = FmriAnalysis._unflatten_to_volume(scores, mask, (2, 3, 1); T=Float64)
+        @test eltype(vol64) == Float64
+    end
+
+    @testset "_normalization_params equivalence" begin
+        ts = Float32[10.0, 12.0, 8.0, 11.0, 9.0]
+        ref = Float32[20.0, 22.0, 18.0, 21.0, 19.0]
+
+        # demean
+        off, sf = FmriAnalysis._normalization_params(ts, "demean")
+        @test off ≈ mean(Float64.(ts))
+        @test sf == 1.0
+
+        # zscore
+        off, sf = FmriAnalysis._normalization_params(ts, "zscore")
+        @test off ≈ mean(Float64.(ts))
+        @test sf ≈ 1.0 / std(Float64.(ts))
+
+        # psc
+        off, sf = FmriAnalysis._normalization_params(ts, "psc")
+        @test off ≈ mean(Float64.(ts))
+        @test sf ≈ 100.0 / mean(Float64.(ts))
+
+        # none
+        off, sf = FmriAnalysis._normalization_params(ts, "none")
+        @test off == 0.0
+        @test sf == 1.0
+
+        # _normalize_ts == _normalize_ts_with_ref(ts, ts, mode)
+        for mode in ["demean", "zscore", "psc", "none"]
+            result_ts = FmriAnalysis._normalize_ts(ts, mode)
+            result_ref = FmriAnalysis._normalize_ts_with_ref(ts, ts, mode)
+            @test result_ts ≈ result_ref
+        end
+
+        # _normalize_ts_with_ref uses ref's stats, not ts's
+        for mode in ["demean", "zscore", "psc"]
+            result = FmriAnalysis._normalize_ts_with_ref(ts, ref, mode)
+            off_r, sf_r = FmriAnalysis._normalization_params(ref, mode)
+            expected = (Float64.(ts) .- off_r) .* sf_r
+            @test result ≈ expected
+        end
+    end
+
 end

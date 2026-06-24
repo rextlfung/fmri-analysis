@@ -621,8 +621,7 @@ function plot_tmap_slices(stat_vol::AbstractArray{<:Real,3};
             end
 
             hm = CairoMakie.heatmap!(ax, sl_s;
-                colormap=cgrad([:cyan, :blue, :black, :red, :yellow],
-                               [0.0, 0.45, 0.5, 0.55, 1.0]),
+                colormap=STAT_COLORMAP,
                 colorrange=(-sym_range, sym_range),
                 nan_color=(:black, 0.0))
 
@@ -672,6 +671,83 @@ Base.@kwdef struct ExperimentParams
     n_discard::Int = 12
 end
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 8.  Shared Internal Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+const STAT_COLORMAP = cgrad([:cyan, :blue, :black, :red, :yellow],
+                            [0.0, 0.45, 0.5, 0.55, 1.0])
+
+"""Load a reconstruction tuple into a ready-to-use 4-D Float32 array."""
+function _load_recon(recon, scheme_base::AbstractString, n_discard::Int)
+    rtype, base, id = recon[1], recon[2], recon[3]
+    if rtype == :basic
+        X = matread(joinpath(base, "$(scheme_base)_$(id).mat"))["img"]
+    elseif rtype == :mslr
+        vars    = matread(joinpath(base, id, "$(scheme_base).mat"))
+        scale_n = length(recon) >= 5 ? recon[5] : nothing
+        X = isnothing(scale_n) ?
+            dropdims(sum(vars["X"], dims=5), dims=5) :
+            vars["X"][:, :, :, :, scale_n]
+    else
+        error("Unknown recon type :$rtype — expected :basic or :mslr")
+    end
+    Y = Float32.(eltype(X) <: Complex ? abs.(X) : X)
+    return Y[:, :, :, (n_discard+1):end]
+end
+
+"""Run GLM on brain voxels only; return brain-space results and intermediates."""
+function _brain_glm(Y_4d::AbstractArray{<:Real,4}, brain_mask_flat::AbstractVector{Bool},
+                    params::ExperimentParams; design_matrix=nothing)
+    (_, _, _, nt) = size(Y_4d)
+    Yr = reshape(Float32.(Y_4d), :, nt)
+    Y_brain = Matrix{Float32}(transpose(Yr[brain_mask_flat, :]))
+    t_brain, beta, X, z_brain, df = run_glm(Y_brain, params.onsets, params.durations,
+        params.contrast, nt, params.tr; design_matrix=design_matrix)
+    return (t_brain=t_brain, z_brain=z_brain, beta=beta, X=X, df=df, Y_brain=Y_brain)
+end
+
+"""Scatter a brain-voxel vector into a full 3-D volume of zeros."""
+function _unflatten_to_volume(scores::AbstractVector, brain_mask_flat::AbstractVector{Bool},
+                              vol_dims::NTuple{3,Int}; T::Type=Float32)
+    flat = zeros(T, prod(vol_dims))
+    flat[brain_mask_flat] .= scores
+    return reshape(flat, vol_dims)
+end
+
+"""Compute (offset, scale) for a normalization mode, applied to a reference series."""
+function _normalization_params(ref::AbstractVector{<:Real}, mode::String)
+    m = mean(Float64.(ref))
+    if mode == "demean"
+        return m, 1.0
+    elseif mode == "zscore"
+        s = std(Float64.(ref))
+        return m, (s > 0 ? 1.0 / s : 1.0)
+    elseif mode == "psc"
+        return m, (abs(m) > eps() ? 100.0 / m : 1.0)
+    else
+        return 0.0, 1.0
+    end
+end
+
+"""Write a NIfTI file if it doesn't already exist."""
+function _write_nifti(path::String, data; success_msg::Union{String,Nothing}=nothing)
+    if isfile(path)
+        @printf("Skipping %s — file already exists\n", path)
+    else
+        niwrite(path, NIVolume(Float32.(data)))
+        !isnothing(success_msg) && @printf("%s\n", success_msg)
+    end
+end
+
+"""Save a CairoMakie figure if save_dir and filename are both provided."""
+function _maybe_save_figure(fig, save_dir, filename; px_per_unit::Int=2)
+    if !isnothing(save_dir) && !isnothing(filename)
+        mkpath(save_dir)
+        CairoMakie.save(joinpath(save_dir, filename), fig; px_per_unit=px_per_unit)
+    end
+end
 
 include("../scripts/run_analysis.jl")
 include("../scripts/compare_recons.jl")

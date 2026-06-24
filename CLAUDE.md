@@ -34,17 +34,25 @@ using .FmriAnalysis
 - `../scripts/compare_recons_time_series.jl` — `compare_recons_time_series` time-series comparison driver
 - `src/export.jl` — NIfTI export helpers
 
-There is no separate entry point — these five files together constitute the module. All included files rely on their dependencies (`Statistics`, `LinearAlgebra`, `FFTW`, `MAT`, `NIfTI`, `Printf`, `Plots`, `CairoMakie`, `Distributions`, `SpecialFunctions`, and the section 1–7 functions) being imported/defined by the parent module and must not add their own `using` statements. Note the unusual direction: a module under `src/` reaches up into `../scripts/` for the pipeline files.
+There is no separate entry point — these five files together constitute the module. All included files rely on their dependencies (`Statistics`, `LinearAlgebra`, `FFTW`, `MAT`, `NIfTI`, `Printf`, `Plots`, `CairoMakie`, `Distributions`, `SpecialFunctions`, and the section 1–8 functions) being imported/defined by the parent module and must not add their own `using` statements. Note the unusual direction: a module under `src/` reaches up into `../scripts/` for the pipeline files.
+
+Section 8 ("Shared Internal Helpers") defines internal functions used across the pipeline files to avoid duplication:
+- `_load_recon(recon, scheme_base, n_discard)` — loads a reconstruction tuple (`:basic`/`:mslr`) into a 4-D Float32 array
+- `_brain_glm(Y_4d, mask_flat, params; design_matrix)` — runs the reshape→mask→GLM pipeline on brain voxels, returns a named tuple `(t_brain, z_brain, beta, X, df, Y_brain)`
+- `_unflatten_to_volume(scores, mask_flat, vol_dims; T)` — scatters brain-voxel scores into a full 3-D volume
+- `_normalization_params(ref, mode)` — computes `(offset, scale)` for a normalization mode (`"demean"`/`"zscore"`/`"psc"`/`"none"`)
+- `_write_nifti(path, data; success_msg)` — writes a NIfTI if the file doesn't already exist
+- `_maybe_save_figure(fig, save_dir, filename)` — saves a CairoMakie figure if both arguments are non-nothing
+- `STAT_COLORMAP` — the shared diverging colormap used for stat-map overlays
 
 ### GLM pipeline
 
 The pipeline operates in this order: `build_design_matrix` → `fit_glm` → `compute_tscores` → `t_to_z`. The `run_glm` wrapper accepts an optional `design_matrix` keyword argument; pass a pre-built matrix when calling it repeatedly with the same parameters (e.g. across MSLR scales) to avoid redundant FFT convolutions. `run_glm` returns `(t_map, beta, X, z_map, df)`.
 
-The GLM is fit on **brain voxels only**. The workflow is:
-1. Flatten 4-D volume to `(n_scans × n_voxels)` matrix
-2. Apply brain mask to select brain columns
-3. Fit GLM on the masked subset
-4. Reconstruct full-size t-map and z-map by placing brain scores back into zeros arrays
+The GLM is fit on **brain voxels only**. The helper `_brain_glm` encapsulates the common workflow:
+1. Flatten 4-D volume to `(n_scans × n_voxels)` matrix (masking before transpose for efficiency)
+2. Fit GLM on the masked subset via `run_glm`
+3. Return brain-space results as a named tuple; use `_unflatten_to_volume` to scatter back into full 3-D volumes
 
 `analyze_and_plot` is a single function with two methods dispatched on input dimensionality (see `scripts/run_analysis.jl`):
 - The **4-D method** `analyze_and_plot(X::…,4}, params, title_base; …)` returns four values: `(slice_idx, t_vol, Y_masked, z_vol)`.

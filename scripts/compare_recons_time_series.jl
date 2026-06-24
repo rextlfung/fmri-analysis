@@ -111,41 +111,23 @@ function compare_recons_time_series(
         nt = 0
 
         for (ci, recon) in enumerate(recons)
-            rtype, base, id = recon[1], recon[2], recon[3]
             recon_labels[ci] = recon[4]
 
-            if rtype == :basic
-                X = matread(joinpath(base, "$(scheme_base)_$(id).mat"))["img"]
-            elseif rtype == :mslr
-                vars    = matread(joinpath(base, id, "$(scheme_base).mat"))
-                scale_n = length(recon) >= 5 ? recon[5] : nothing
-                X = isnothing(scale_n) ?
-                    dropdims(sum(vars["X"], dims=5), dims=5) :
-                    vars["X"][:, :, :, :, scale_n]
-            else
-                error("Unknown recon type :$rtype — expected :basic or :mslr")
-            end
-
-            Y = Float32.(eltype(X) <: Complex ? abs.(X) : X)
-            Y = Y[:, :, :, (params.n_discard+1):end]
+            Y = _load_recon(recon, scheme_base, params.n_discard)
             (nx, ny, nz, nt_local) = size(Y)
             nt = nt_local
 
             if isnothing(shared_mask)
-                mean_vol    = dropdims(mean(Y, dims=4), dims=4)
-                shared_mask = bet_brain_mask(mean_vol)
+                shared_mask = bet_brain_mask(dropdims(mean(Y, dims=4), dims=4))
             end
             if isnothing(shared_dm)
                 shared_dm = build_design_matrix(params.onsets, params.durations, nt, params.tr)
             end
 
             mask_flat = vec(shared_mask)
-            Y_brain = Matrix{Float32}(transpose(reshape(Y, :, nt)))[:, mask_flat]
-            t_brain, beta, _, z_brain, _ = run_glm(
-                Y_brain, params.onsets, params.durations,
-                params.contrast, nt, params.tr; design_matrix=shared_dm)
+            glm = _brain_glm(Y, mask_flat, params; design_matrix=shared_dm)
 
-            scores = stat == "z" ? Float64.(z_brain) : Float64.(t_brain)
+            scores = stat == "z" ? Float64.(glm.z_brain) : Float64.(glm.t_brain)
 
             # ── Peak voxel ────────────────────────────────────────────────────
             if peak_source == :first && !isnothing(ref_peak_idx)
@@ -155,8 +137,8 @@ function compare_recons_time_series(
                 ci == 1 && (ref_peak_idx = pk_idx)
             end
 
-            data_peak = Y_brain[:, pk_idx]
-            model_peak = shared_dm * beta[:, pk_idx]
+            data_peak = glm.Y_brain[:, pk_idx]
+            model_peak = shared_dm * glm.beta[:, pk_idx]
             peak_ts_raw[ci]    = data_peak
             peak_stat_vals[ci] = scores[pk_idx]
             peak_r2_vals[ci]   = _r_squared(Float64.(data_peak), model_peak)
@@ -171,7 +153,7 @@ function compare_recons_time_series(
                 ci == 1 && (ref_top_idx = top_idx)
             end
             topn_counts[ci] = length(top_idx)
-            Y_top = Y_brain[:, top_idx]
+            Y_top = glm.Y_brain[:, top_idx]
             topn_ts_raw[ci] = vec(mean(Y_top, dims=2))
             topn_ts_sem[ci] = length(top_idx) > 1 ?
                 vec(std(Y_top, dims=2) ./ sqrt(length(top_idx))) :
@@ -179,7 +161,7 @@ function compare_recons_time_series(
 
             # ── Fitted model for overlay / residuals ──────────────────────────
             peak_ts_model[ci] = model_peak
-            topn_model = vec(mean(shared_dm * beta[:, top_idx], dims=2))
+            topn_model = vec(mean(shared_dm * glm.beta[:, top_idx], dims=2))
             topn_ts_model[ci] = topn_model
 
             # Residual std of averaged top-n% series (noise quality metric)
@@ -200,7 +182,7 @@ function compare_recons_time_series(
         norm_topn_m = Vector{Vector{Float64}}(undef, n_recons)
 
         for ci in 1:n_recons
-            sf = _normalize_scale_factor(topn_ts_raw[ci], normalize)
+            _, sf = _normalization_params(topn_ts_raw[ci], normalize)
             norm_sem[ci] = Float64.(topn_ts_sem[ci]) .* sf
 
             norm_peak_m[ci] = _normalize_ts_with_ref(
@@ -224,11 +206,8 @@ function compare_recons_time_series(
             show_task_shading = show_task_shading,
             time_range = time_range)
         display(fig1)
-
-        if !isnothing(save_dir) && !isnothing(save_name)
-            mkpath(save_dir)
-            CairoMakie.save(joinpath(save_dir, "$(scheme_prefix)_$(save_name)_peak.png"), fig1; px_per_unit=2)
-        end
+        _maybe_save_figure(fig1, save_dir,
+            isnothing(save_name) ? nothing : "$(scheme_prefix)_$(save_name)_peak.png")
 
         # ── Figure 2: Top n% averaged time series ────────────────────────────
         fig2 = _plot_time_series_figure(
@@ -237,10 +216,8 @@ function compare_recons_time_series(
             show_task_shading = show_task_shading,
             time_range = time_range)
         display(fig2)
-
-        if !isnothing(save_dir) && !isnothing(save_name)
-            CairoMakie.save(joinpath(save_dir, "$(scheme_prefix)_$(save_name)_topn.png"), fig2; px_per_unit=2)
-        end
+        _maybe_save_figure(fig2, save_dir,
+            isnothing(save_name) ? nothing : "$(scheme_prefix)_$(save_name)_topn.png")
 
         # ── Figure 3: Power spectrum of top-n% averaged time series ──────────
         if show_spectrum
@@ -248,10 +225,8 @@ function compare_recons_time_series(
                 topn_ts_raw, recon_labels, colors, params,
                 "(c) Power spectra of top $(top_percent)% voxels — $scheme_label")
             display(fig3)
-
-            if !isnothing(save_dir) && !isnothing(save_name)
-                CairoMakie.save(joinpath(save_dir, "$(scheme_prefix)_$(save_name)_spectrum.png"), fig3; px_per_unit=2)
-            end
+            _maybe_save_figure(fig3, save_dir,
+                isnothing(save_name) ? nothing : "$(scheme_prefix)_$(save_name)_spectrum.png")
         end
 
         # ── Figure 4: Residual time series (data − model) ────────────────────
@@ -268,10 +243,8 @@ function compare_recons_time_series(
             CairoMakie.hlines!(CairoMakie.current_axis(), [0.0];
                 color = :gray50, linewidth = 1.0, linestyle = :dash)
             display(fig4)
-
-            if !isnothing(save_dir) && !isnothing(save_name)
-                CairoMakie.save(joinpath(save_dir, "$(scheme_prefix)_$(save_name)_residuals.png"), fig4; px_per_unit=2)
-            end
+            _maybe_save_figure(fig4, save_dir,
+                isnothing(save_name) ? nothing : "$(scheme_prefix)_$(save_name)_residuals.png")
         end
     end
 
@@ -290,50 +263,14 @@ function _r_squared(y::AbstractVector{Float64}, yhat::AbstractVector{Float64})
 end
 
 function _normalize_ts(ts::AbstractVector{<:Real}, mode::String)
-    ts64 = Float64.(ts)
-    m = mean(ts64)
-    if mode == "demean"
-        return ts64 .- m
-    elseif mode == "zscore"
-        s = std(ts64)
-        return s > 0 ? (ts64 .- m) ./ s : ts64 .- m
-    elseif mode == "psc"
-        return abs(m) > eps() ? 100.0 .* (ts64 .- m) ./ m : ts64 .- m
-    else
-        return ts64
-    end
+    off, sf = _normalization_params(ts, mode)
+    return (Float64.(ts) .- off) .* sf
 end
 
 function _normalize_ts_with_ref(ts::AbstractVector{<:Real},
                                  ref::AbstractVector{<:Real}, mode::String)
-    ts64  = Float64.(ts)
-    ref64 = Float64.(ref)
-    m = mean(ref64)
-    if mode == "demean"
-        return ts64 .- m
-    elseif mode == "zscore"
-        s = std(ref64)
-        return s > 0 ? (ts64 .- m) ./ s : ts64 .- m
-    elseif mode == "psc"
-        return abs(m) > eps() ? 100.0 .* (ts64 .- m) ./ m : ts64 .- m
-    else
-        return ts64
-    end
-end
-
-function _normalize_scale_factor(ts::AbstractVector{<:Real}, mode::String)
-    ts64 = Float64.(ts)
-    m = mean(ts64)
-    if mode == "demean"
-        return 1.0
-    elseif mode == "zscore"
-        s = std(ts64)
-        return s > 0 ? 1.0 / s : 1.0
-    elseif mode == "psc"
-        return abs(m) > eps() ? 100.0 / m : 1.0
-    else
-        return 1.0
-    end
+    off, sf = _normalization_params(ref, mode)
+    return (Float64.(ts) .- off) .* sf
 end
 
 function _recon_colors(n::Int)

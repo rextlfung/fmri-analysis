@@ -16,29 +16,12 @@ Writes (skipping any file that already exists):
 function export_niftis(Y_masked::AbstractArray{<:Real,4}, t_vol::AbstractArray{<:Real,3},
     prefix::String, out_dir::String; z_vol::Union{AbstractArray{<:Real,3},Nothing}=nothing)
 
-    mag_path = joinpath(out_dir, "$(prefix)_mag.nii")
-    if isfile(mag_path)
-        @printf("Skipping %s — file already exists\n", mag_path)
-    else
-        niwrite(mag_path, NIVolume(Float32.(Y_masked)))
-    end
-
-    tmap_path = joinpath(out_dir, "$(prefix)_tmap.nii")
-    if isfile(tmap_path)
-        @printf("Skipping %s — file already exists\n", tmap_path)
-    else
-        niwrite(tmap_path, NIVolume(Float32.(t_vol)))
-        @printf("Exported %s\n", prefix)
-    end
-
+    _write_nifti(joinpath(out_dir, "$(prefix)_mag.nii"), Y_masked)
+    _write_nifti(joinpath(out_dir, "$(prefix)_tmap.nii"), t_vol;
+                 success_msg="Exported $prefix")
     if !isnothing(z_vol)
-        zmap_path = joinpath(out_dir, "$(prefix)_zmap.nii")
-        if isfile(zmap_path)
-            @printf("Skipping %s — file already exists\n", zmap_path)
-        else
-            niwrite(zmap_path, NIVolume(Float32.(z_vol)))
-            @printf("Exported %s z-map\n", prefix)
-        end
+        _write_nifti(joinpath(out_dir, "$(prefix)_zmap.nii"), z_vol;
+                     success_msg="Exported $prefix z-map")
     end
 end
 
@@ -61,30 +44,7 @@ function export_niftis(Y_vols::Vector{<:AbstractArray{<:Real,4}},
     for scale in 1:Nscales
         ps = Int.(patch_sizes[scale])
         tag = "$(prefix)_$(Nscales)scales_scale$(scale)_patchsize$(ps)"
-
-        mag_path = joinpath(out_dir, "$(tag)_mag.nii")
-        if isfile(mag_path)
-            @printf("Skipping %s — file already exists\n", mag_path)
-        else
-            niwrite(mag_path, NIVolume(Float32.(Y_vols[scale])))
-        end
-
-        tmap_path = joinpath(out_dir, "$(tag)_tmap.nii")
-        if isfile(tmap_path)
-            @printf("Skipping %s — file already exists\n", tmap_path)
-        else
-            niwrite(tmap_path, NIVolume(Float32.(t_vols[scale])))
-            @printf("Exported %s\n", tag)
-        end
-
-        if !isnothing(z_vols)
-            zmap_path = joinpath(out_dir, "$(tag)_zmap.nii")
-            if isfile(zmap_path)
-                @printf("Skipping %s — file already exists\n", zmap_path)
-            else
-                niwrite(zmap_path, NIVolume(Float32.(z_vols[scale])))
-                @printf("Exported %s z-map\n", tag)
-            end
-        end
+        z_vol_s = isnothing(z_vols) ? nothing : z_vols[scale]
+        export_niftis(Y_vols[scale], t_vols[scale], tag, out_dir; z_vol=z_vol_s)
     end
 end
