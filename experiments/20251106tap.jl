@@ -1,5 +1,5 @@
 using MAT, NIfTI, Revise
-includet("../src/fmri_analysis.jl")
+includet(joinpath(@__DIR__, "../src/fmri_analysis.jl"))
 using .FmriAnalysis
 
 # FSL environment — required for bet_brain_mask
