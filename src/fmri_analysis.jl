@@ -12,9 +12,12 @@ Sections
   5.  Brain Mask Extraction
   6.  Visualization
   7.  Experiment Parameters
+  8.  Shared Internal Helpers
 
-The high-level analysis pipelines (`analyze_and_plot`) live in
-`scripts/run_analysis.jl`, included at the end of this file.
+The high-level analysis pipelines live in `scripts/`:
+- `run_analysis.jl`              — `analyze_and_plot`
+- `compare_recons.jl`            — `compare_recons`
+- `compare_recons_time_series.jl` — `compare_recons_time_series`
 
 System dependency: FSL (`bet` must be on PATH) for brain mask extraction.
 """
