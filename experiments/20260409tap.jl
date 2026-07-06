@@ -23,21 +23,40 @@ params = ExperimentParams(
 basic_base = "/StorageRAID/rexfung/20260409tap/recon/basic"
 mslr_base  = "/StorageRAID/rexfung/20260409tap/recon/mslr"
 
+# %% PD vs CAIPI sampling — L1-wavelet + TV recon only
+schemes_cmp_single = [("", "L1-wavelet + TV: PD vs CAIPI", "l1wavelet_tv")]
+recons = [
+    (:basic, basic_base, "pd_recon_bart_l1_r0.0050_tv_r0.0050",    "PD sampling"),
+    (:basic, basic_base, "caipi_recon_bart_l1_r0.0050_tv_r0.0050", "CAIPI sampling"),
+]
+compare_recons(schemes_cmp_single, recons, params;
+    save_dir = "plots", save_name = "pd_vs_caipi", stat = "z", threshold = 3)
+
+# %% PD vs CAIPI sampling — L1-wavelet + TV recon only
+recons = [
+    (:basic, basic_base, "pd_recon_bart_l1_r0.0050_tv_r0.0050",    "PD sampling"),
+    (:basic, basic_base, "caipi_recon_bart_l1_r0.0050_tv_r0.0050", "CAIPI sampling"),
+]
+compare_recons_time_series(schemes_cmp_single, recons, params;
+    save_dir = "plots", save_name = "pd_vs_caipi_ts", stat = "z",
+    normalize = "psc", condition_names = ["Tap", "Rest"], time_range = (0, 120),
+    top_percent = 0.1)
 # ═══════════════════════════════════════════════════════════════════════════════
 # Per-recon analyze_and_plot + NIfTI export
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # %% ── MSLR reconstructions ──────────────────────────────────────────────────
 mslr_cfgs = [
-    "G+L+L_2xlambda",
-    "G+L+L_3xlambda",
-    "G+L+L_4xlambda",
-    "G+L+L_5xlambda",
+    # "G+L+L_2xlambda",
+    # "G+L+L_3xlambda",
+    # "G+L+L_4xlambda",
+    # "G+L+L_5xlambda",
+    # "G+L+L_6xlambda",
 ]
 
 schemes_all = [
     ("pd_recon",       "PD sampling",                 "pd"),
-    ("caipi_ts_recon", "time-shifted CAIPI sampling", "caipi_ts"),
+    # ("caipi_ts_recon", "time-shifted CAIPI sampling", "caipi_ts"),
     ("caipi_recon",    "CAIPI sampling",              "caipi"),
 ]
 
@@ -68,7 +87,7 @@ end
 
 # %% ── Basic reconstructions ─────────────────────────────────────────────────
 basic_recon_methods = [
-    ("rss",                        "RSS",          "rss"),
+    # ("rss",                        "RSS",          "rss"),
     ("cgs_i100",                   "CG-SENSE",     "cgs"),
     ("bart_l1_r0.0050_tv_r0.0050", "BART (L1+TV)", "bart"),
 ]
@@ -110,9 +129,9 @@ schemes_cmp = [
 
 # %% Overview
 recons = [
-    (:mslr,  mslr_base,  "G+L+L_8xlambda", "3-scale low-rank"),
-    (:mslr,  mslr_base,  "G+L_8xlambda",  "Global + local low-rank"),
-    (:mslr,  mslr_base,  "L_8xlambda",  "Local low-rank"),
+    # (:mslr,  mslr_base,  "G+L+L_8xlambda", "3-scale low-rank"),
+    # (:mslr,  mslr_base,  "G+L_8xlambda",  "Global + local low-rank"),
+    # (:mslr,  mslr_base,  "L_8xlambda",  "Local low-rank"),
     (:basic, basic_base, "bart_l1_r0.0050_tv_r0.0050", "L1-wavelet + TV"),
     (:basic, basic_base, "cgs_i100", "CG-SENSE"),
 ]
@@ -173,7 +192,6 @@ recons = [
 ]
 compare_recons(schemes_cmp, recons, params; slice_indices=ref_si,
     save_dir = "plots", save_name = "llr_sum", stat = "z")
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Time-series comparison (compare_recons_time_series)

@@ -11,7 +11,7 @@
 # Must not add its own `using` statements.
 
 """
-    compare_recons(schemes, recons, params; threshold_quantile=0.99f0)
+    compare_recons(schemes, recons, params; threshold_quantile=0.99f0, threshold=nothing)
 
 For each sampling scheme, run the GLM on every reconstruction and display a
 single comparison figure.  The figure has one column per reconstruction and
@@ -24,6 +24,10 @@ All columns are pinned to those same slice indices.
               `file_base` is used to build per-recon `.mat` filenames.
               The third element (export prefix) is accepted but ignored, so an
               existing `schemes` vector can be passed verbatim.
+              An empty `file_base` (`""`) is a no-op prefix for `:basic` recons —
+              use it with `identifier`s that already spell out the full filename
+              stem to compare different sampling schemes as columns for one
+              fixed recon method, in a single figure.
 - `recons`  : vector of tuples `(type, base_dir, identifier, display_label[, scale_n])`.
               `type` is `:basic` or `:mslr`:
               - `:basic` → `\$(base_dir)/\$(file_base)_\$(identifier).mat`, key `"img"` (4-D)
@@ -32,7 +36,9 @@ All columns are pinned to those same slice indices.
                            With `scale_n::Int` (5-tuple): extracts the n-th scale (1-based).
 - `params`  : `ExperimentParams` with scan timing and GLM settings.
 - `threshold_quantile` : percentile of |t| in the first recon's brain voxels used
-              to threshold the overlay (default `0.99`).
+              to threshold the overlay (default `0.99`). Ignored if `threshold` is given.
+- `threshold` : manual absolute threshold on the displayed stat map, overriding
+              `threshold_quantile` when provided (default `nothing`).
 
 Each scheme produces one `CairoMakie.Figure` displayed via `display`.
 """
@@ -41,6 +47,7 @@ function compare_recons(
     recons,
     params::ExperimentParams;
     threshold_quantile::Real = 0.99f0,
+    threshold::Union{Nothing, Real} = nothing,
     slice_indices::Union{Nothing, NamedTuple} = nothing,
     save_dir::Union{Nothing, AbstractString} = nothing,
     save_name::Union{Nothing, AbstractString} = nothing,
@@ -95,8 +102,11 @@ function compare_recons(
         # ── Shared colour scale across all recons ──────────────────────────────
         sym_range = maximum(max_t_vals)
 
-        # ── Display threshold from first recon's brain voxels ──────────────────
-        display_thr = max(pct99_vals[1], eps(Float32))
+        # ── Display threshold: manual override, else first recon's quantile ────
+        display_thr = isnothing(threshold) ? max(pct99_vals[1], eps(Float32)) : Float32(threshold)
+
+        # ── Threshold values shown in headers (same as display_thr when manual) ─
+        header_thr_vals = isnothing(threshold) ? pct99_vals : fill(Float32(threshold), n_recons)
 
         # ── Build comparison figure ────────────────────────────────────────────
         CELL_W  = 300
@@ -130,7 +140,7 @@ function compare_recons(
         for (c, recon) in enumerate(recons)
             rlabel = recon[4]
             hdr = @sprintf("%s\n|%s| threshold = %.2f\nmax |%s| = %.2f",
-                           rlabel, stat, pct99_vals[c], stat, max_t_vals[c])
+                           rlabel, stat, header_thr_vals[c], stat, max_t_vals[c])
             CairoMakie.Label(fig[0, c + 1], hdr;
                 fontsize      = 19,
                 color         = :white,

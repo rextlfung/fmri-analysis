@@ -77,16 +77,18 @@ Standard reconstructions are 4-D `(nx, ny, nz, nt)`. MSLR reconstructions are 5-
 
 ### compare_recons pipeline (`scripts/compare_recons.jl`)
 
-`compare_recons(schemes, recons, params; threshold_quantile=0.99f0, stat="t", slice_indices=nothing, save_dir=nothing, save_name=nothing)` loops over sampling schemes and produces one CairoMakie figure per scheme. Each figure has three rows (axial / coronal / sagittal) and one column per reconstruction. Slices are centred at the peak positive t-score voxel of the first recon (or at `slice_indices` if provided) and are shared across all columns. Pass `stat="z"` to display z-score maps instead of t-score maps. When `save_dir` and `save_name` are both provided, each figure is also saved as a PNG. Returns the slice indices NamedTuple used.
+`compare_recons(schemes, recons, params; threshold_quantile=0.99f0, threshold=nothing, stat="t", slice_indices=nothing, save_dir=nothing, save_name=nothing)` loops over sampling schemes and produces one CairoMakie figure per scheme. Each figure has three rows (axial / coronal / sagittal) and one column per reconstruction. Slices are centred at the peak positive t-score voxel of the first recon (or at `slice_indices` if provided) and are shared across all columns. Pass `stat="z"` to display z-score maps instead of t-score maps. Pass `threshold` to set a manual absolute display threshold, overriding the `threshold_quantile`-based computation. When `save_dir` and `save_name` are both provided, each figure is also saved as a PNG. Returns the slice indices NamedTuple used.
 
 `recons` is a vector of tuples with the following shapes:
 - `(:basic, base_dir, identifier, label)` — loads `base_dir/$(scheme_base)_$(identifier).mat`, key `"img"` (4-D)
 - `(:mslr,  base_dir, cfg,        label)` — loads `base_dir/$(cfg)/$(scheme_base).mat`, key `"X"` (5-D); **sums all scales**
 - `(:mslr,  base_dir, cfg,        label, n::Int)` — same file; **extracts the n-th scale** (1-based)
 
+An empty `scheme_base` (`""` in the `schemes` tuple) is a no-op prefix for `:basic` recons — `identifier` is used verbatim as the filename stem instead of `$(scheme_base)_$(identifier)`. This lets a single call compare different sampling schemes as columns for one fixed recon method (bake the scheme name into each `identifier`), rather than looping over schemes as separate figures.
+
 The brain mask and GLM design matrix are computed once from the first recon and shared across all recons within a scheme.
 
-Column titles show `"<label>\n|<stat>| threshold = X.XX  max |<stat>| = X.XX"`. The colormap range is the global max across all recons; the display threshold is the `threshold_quantile`-percentile of the first recon's brain voxels. The visualization functions (`tmap_summary`, `plot_tmap_flat`, `plot_tmap_slices`) accept a `stat` keyword (default `"t-score"`) to customize labels for arbitrary statistical maps.
+Column titles show `"<label>\n|<stat>| threshold = X.XX  max |<stat>| = X.XX"`. The colormap range is the global max across all recons; the display threshold is the `threshold_quantile`-percentile of the first recon's brain voxels, or the manual `threshold` value when provided (shown verbatim in every column's header in that case). The visualization functions (`tmap_summary`, `plot_tmap_flat`, `plot_tmap_slices`) accept a `stat` keyword (default `"t-score"`) to customize labels for arbitrary statistical maps.
 
 ### compare_recons_time_series pipeline (`scripts/compare_recons_time_series.jl`)
 

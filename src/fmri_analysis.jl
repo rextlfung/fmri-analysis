@@ -682,11 +682,17 @@ end
 const STAT_COLORMAP = cgrad([:cyan, :blue, :black, :red, :yellow],
                             [0.0, 0.45, 0.5, 0.55, 1.0])
 
-"""Load a reconstruction tuple into a ready-to-use 4-D Float32 array."""
+"""Load a reconstruction tuple into a ready-to-use 4-D Float32 array.
+
+An empty `scheme_base` is treated as a no-op prefix for `:basic` recons — `id`
+is used verbatim as the filename stem. This lets a single `compare_recons`/
+`compare_recons_time_series` call compare different sampling schemes as
+columns for one fixed recon method, by baking the scheme into each `id`."""
 function _load_recon(recon, scheme_base::AbstractString, n_discard::Int)
     rtype, base, id = recon[1], recon[2], recon[3]
     if rtype == :basic
-        X = matread(joinpath(base, "$(scheme_base)_$(id).mat"))["img"]
+        fname = isempty(scheme_base) ? "$(id).mat" : "$(scheme_base)_$(id).mat"
+        X = matread(joinpath(base, fname))["img"]
     elseif rtype == :mslr
         vars    = matread(joinpath(base, id, "$(scheme_base).mat"))
         scale_n = length(recon) >= 5 ? recon[5] : nothing
